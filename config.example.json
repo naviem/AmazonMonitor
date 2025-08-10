@@ -1,0 +1,10 @@
+{
+  "minutes_per_check": 10,
+  "seconds_between_check": 60,
+  "tld": "ca",
+  "url_params": {},
+  "webhook_url": "",
+  "warehouse": false,
+  "debug": true
+}
+
