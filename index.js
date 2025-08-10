@@ -360,8 +360,13 @@ function readUrlsFile() {
         const n = parseFloat(val)
         if (!isNaN(n)) threshold = n
       } else if (key === 'warehouse') {
-        const b = parseBooleanToken(val)
-        if (b !== null) useWarehouse = b
+        const v = val.toLowerCase()
+        if (['only', 'strict', 'wh-only', 'warehouse-only', 'onlywh', 'only-warehouse'].includes(v)) {
+          useWarehouse = 'only'
+        } else {
+          const b = parseBooleanToken(val)
+          if (b !== null) useWarehouse = b
+        }
       } else if (key === 'alerts') {
         const v = val.toLowerCase()
         if (v === 'stock') { allowStockAlerts = true; allowPriceAlerts = false }
@@ -407,7 +412,9 @@ async function checkOnce() {
   const items = entries.map(e => ({
     finalUrl: appendParams(toProductUrl(e.value), config.url_params),
     threshold: e.threshold,
-    useWarehouse: e.useWarehouse === null || e.useWarehouse === undefined ? DEFAULT_WAREHOUSE : e.useWarehouse,
+    useWarehouse: (e.useWarehouse === null || e.useWarehouse === undefined)
+      ? DEFAULT_WAREHOUSE
+      : e.useWarehouse,
     allowStockAlerts: e.allowStockAlerts,
     allowPriceAlerts: e.allowPriceAlerts,
   }))
@@ -430,7 +437,13 @@ async function checkOnce() {
         continue
       }
       const info = await parseItem($, finalUrl, useWarehouse)
-      if (config.debug) dbg(`ASIN detected: ${extractAsin(finalUrl) || 'N/A'}`)
+      if (config.debug) {
+        const asin = extractAsin(finalUrl) || 'N/A'
+        const alertsMode = (allowStockAlerts && allowPriceAlerts) ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
+        const thrTxt = (typeof threshold === 'number' && !isNaN(threshold)) ? threshold.toFixed(2) : 'none'
+        const whTxt = useWarehouse ? 'on' : 'off'
+        dbg(`ASIN detected: ${asin} | warehouse=${whTxt} | alerts=${alertsMode} | threshold=${thrTxt}`)
+      }
 
       const prev = state[finalUrl]
       const alertsMode = allowStockAlerts && allowPriceAlerts ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
@@ -446,7 +459,7 @@ async function checkOnce() {
         alerts: alertsMode,
       }
 
-      const usingWh = !!useWarehouse && !!info.warehouse
+      const usingWh = (useWarehouse === 'only') ? !!info.warehouse : (!!useWarehouse && !!info.warehouse)
       const prevPrice = usingWh ? prev?.warehouse?.lastPrice : prev?.lastPrice
       const newPrice = usingWh ? info.warehouse.lastPrice : info.lastPrice
       const prevAvail = usingWh ? prev?.warehouse?.available : prev?.available
@@ -455,10 +468,19 @@ async function checkOnce() {
       const passesThreshold = threshold ? newPrice <= threshold : true
       const isBackInStock = prev && (prevAvail === false || prevAvail === 0 || prevAvail === undefined) && newAvail === true
 
+      const whOnly = useWarehouse === 'only'
       if (allowStockAlerts && isBackInStock && passesThreshold) {
+        let desc = `Current Price: ${info.symbol}${newPrice.toFixed(2)}`
+        if (usingWh) {
+          const mainPrice = info?.lastPrice || 0
+          if (mainPrice > 0 && newPrice > 0 && newPrice < mainPrice) {
+            const diff = (mainPrice - newPrice).toFixed(2)
+            desc = `Warehouse Price: ${info.symbol}${newPrice.toFixed(2)}\nMain Price: ${info.symbol}${mainPrice.toFixed(2)}\nSavings vs Main: ${info.symbol}${diff}`
+          }
+        }
         await postWebhook({
           title: `Back in stock for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
-          description: `Current Price: ${info.symbol}${newPrice.toFixed(2)}\n\n${finalUrl}`,
+          description: `${desc}\n\n${finalUrl}`,
           thumbnail: info.image ? { url: info.image } : undefined,
           color: 0x0099ff,
         })

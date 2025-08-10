@@ -2,7 +2,7 @@
 # Comments start with # and blank lines are ignored.
 # Optional per-item flags using key=value segments after the URL (order doesn't matter):
 # - threshold=PRICE
-# - warehouse=on|off
+# - warehouse=on|off|only   (only = alert on Warehouse offers exclusively)
 # - alerts=stock|price|none   (default: both)
 # Examples:
 #   https://www.amazon.com/dp/B0XXXXX123|threshold=299.99

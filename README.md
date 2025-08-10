@@ -29,6 +29,7 @@ Edit `config.json`:
 - `url_params`: Optional key/value query params appended to every request
 - `webhook_url`: Your Discord webhook URL (required to receive alerts)
 - `default_warehouse`: `true` to use Amazon Warehouse offers by default when available (can be overridden per-item via `|wh`/`|nowh`)
+  - You can also set per-item `warehouse=only` to alert only on Warehouse availability/price and ignore the main offer
 - `debug`: `true` for extra console detail
 
 Note: For backward compatibility, if `default_warehouse` is not set, the older `warehouse` key will be used as the default.
@@ -39,7 +40,7 @@ Edit `urls.txt`. One entry per line.
 - Lines starting with `#` are comments
 - Use readable key=value tokens after the URL, in any order:
   - `threshold=PRICE` (alert only when current price <= PRICE)
-  - `warehouse=on|off` (override default Warehouse for this item)
+  - `warehouse=on|off|only` (override default Warehouse for this item; `only` = only consider Warehouse offers)
   - `alerts=stock|price|none` (default: both)
 
 Examples:
@@ -86,6 +87,7 @@ How Warehouse tracking works
 Back-in-stock notifications
 - The monitor tracks availability. If an item was previously unavailable and becomes available, it sends a "Back in stock" alert.
 - Availability is tracked per the active source (Warehouse vs main). Thresholds still apply to back-in-stock alerts.
+- If a Warehouse offer appears and is cheaper than the main Amazon price, the back-in-stock alert will include both prices and the savings vs. main.
 
 What’s stored in `watch.json`
 For each tracked URL (including applied params):
