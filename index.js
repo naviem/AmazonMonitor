@@ -2,6 +2,8 @@ import fs from 'fs'
 import { load } from 'cheerio'
 
 const config = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url)).toString())
+// Backward compatible default for Warehouse tracking
+const DEFAULT_WAREHOUSE = !!(Object.prototype.hasOwnProperty.call(config, 'default_warehouse') ? config.default_warehouse : config.warehouse)
 const MIN_MINUTES = 10
 const MIN_DELAY_SEC = 60
 const minutesPerCheck = Math.max(Number(config.minutes_per_check || MIN_MINUTES), MIN_MINUTES)
@@ -28,7 +30,7 @@ function printBanner() {
   const github = 'GitHub: https://github.com/naviem'
   const paypal = 'Support: https://www.paypal.com/donate/?hosted_button_id=T8DEQ4E4CU95N'
   const meta1 = `Scans every: ${minutesPerCheck} min  |  Delay between items: ${secondsBetweenCheck} sec`
-  const meta2 = `TLD: ${config.tld}  |  Warehouse tracking: ${config.warehouse ? 'ON' : 'OFF'}`
+  const meta2 = `TLD: ${config.tld}  |  Default Warehouse: ${DEFAULT_WAREHOUSE ? 'ON' : 'OFF'}`
 
   const lines = [title, author, github, paypal, meta1, meta2]
   const width = Math.max(...lines.map(l => l.length)) + 2
@@ -48,7 +50,7 @@ function printBanner() {
   console.log(cyan + '│' + reset + pad(meta1) + cyan + '│' + reset)
   console.log(cyan + '│' + reset + pad(meta2) + cyan + '│' + reset)
   console.log(cyan + bot + reset)
-  console.log(dim + 'Tip: add |PRICE after a URL/ASIN in urls.txt to set a per-item threshold.' + reset)
+  console.log(dim + 'Tip: use |threshold=PRICE |warehouse=on/off |alerts=stock|price|none (default: both)' + reset)
   console.log('')
 }
 
@@ -198,7 +200,7 @@ function priceFormat(p) {
   return parseFloat(p).toFixed(2)
 }
 
-async function parseItem($, url) {
+async function parseItem($, url, includeWarehouse = DEFAULT_WAREHOUSE) {
   const priceElms = [
     $('#priceblock_ourprice').text().trim(),
     $('#priceblock_saleprice').text().trim(),
@@ -228,10 +230,11 @@ async function parseItem($, url) {
     lastPrice: parseFloat(bestPrice || '0'),
     symbol,
     image,
+    available: !!bestPrice && parseFloat(bestPrice || '0') > 0,
   }
 
-  // Optionally parse AOD for Amazon Warehouse price
-  if (config.warehouse) {
+  // Optionally parse AOD for Amazon Warehouse price (per-item override supported)
+  if (includeWarehouse) {
     let whDom = null
     const $nodes = $('#aod-offer, .aod-offer')
     $nodes.each(function () {
@@ -259,6 +262,7 @@ async function parseItem($, url) {
           price: priceFmt,
           lastPrice: priceVal,
           symbol: (priceRaw || '').replace(/[,.]+/g, '').replace(/[\d a-zA-Z]/g, '') || symbol,
+          available: priceVal > 0,
         }
       }
     })
@@ -294,12 +298,13 @@ async function parseItem($, url) {
           if (s.includes('amazon warehouse') || s.includes('warehouse deals') || s.includes('warehouse')) {
             const priceText = offer.find('#aod-offer-price .aok-offscreen, #aod-offer-price .a-offscreen, .aod-offer-price .aok-offscreen, .aod-offer-price .a-offscreen').first().text().trim()
             const priceRaw = priceText || offerPriceFallback(offer)
-            const whPrice2 = priceRaw ? priceFormat(priceRaw) : ''
-            whAjax = {
+          const whPrice2 = priceRaw ? priceFormat(priceRaw) : ''
+          whAjax = {
               seller: seller || 'Amazon Warehouse',
               price: whPrice2,
               lastPrice: whPrice2 ? parseFloat(whPrice2) : 0,
-              symbol: (priceRaw || '').replace(/[,.]+/g, '').replace(/[\d a-zA-Z]/g, '') || symbol,
+            symbol: (priceRaw || '').replace(/[,.]+/g, '').replace(/[\d a-zA-Z]/g, '') || symbol,
+            available: (whPrice2 ? parseFloat(whPrice2) : 0) > 0,
             }
           }
         })
@@ -321,6 +326,13 @@ function offerPriceFallback($ctx) {
   return m ? m[0] : ''
 }
 
+function parseBooleanToken(value) {
+  const v = String(value || '').trim().toLowerCase()
+  if (['1', 'on', 'true', 'yes', 'y'].includes(v)) return true
+  if (['0', 'off', 'false', 'no', 'n'].includes(v)) return false
+  return null
+}
+
 function readUrlsFile() {
   const p = new URL('./urls.txt', import.meta.url)
   if (!fs.existsSync(p)) return []
@@ -330,11 +342,35 @@ function readUrlsFile() {
   for (const line of lines) {
     const l = line.trim()
     if (!l || l.startsWith('#')) continue
-    // Support threshold via pipe: URL|299.99 or ASIN|299.99
+    // Syntax: URL|threshold=PRICE|warehouse=on/off|alerts=stock|price|both|none
     const parts = l.split('|').map(x => x.trim())
     const value = parts[0]
-    const threshold = parts[1] ? parseFloat(parts[1]) : null
-    entries.push({ value, threshold: isNaN(threshold) ? null : threshold })
+    let threshold = null
+    let useWarehouse = null // null = use global default
+    let allowStockAlerts = true
+    let allowPriceAlerts = true
+    for (let i = 1; i < parts.length; i++) {
+      const token = parts[i]
+      if (!token) continue
+      const eq = token.indexOf('=')
+      if (eq === -1) continue
+      const key = token.slice(0, eq).trim().toLowerCase()
+      const val = token.slice(eq + 1).trim()
+      if (key === 'threshold') {
+        const n = parseFloat(val)
+        if (!isNaN(n)) threshold = n
+      } else if (key === 'warehouse') {
+        const b = parseBooleanToken(val)
+        if (b !== null) useWarehouse = b
+      } else if (key === 'alerts') {
+        const v = val.toLowerCase()
+        if (v === 'stock') { allowStockAlerts = true; allowPriceAlerts = false }
+        else if (v === 'price') { allowStockAlerts = false; allowPriceAlerts = true }
+        else if (v === 'both' || v === 'all' || v === '') { allowStockAlerts = true; allowPriceAlerts = true }
+        else if (v === 'none' || v === 'off') { allowStockAlerts = false; allowPriceAlerts = false }
+      }
+    }
+    entries.push({ value, threshold: threshold ?? null, useWarehouse, allowStockAlerts, allowPriceAlerts })
   }
   return entries
 }
@@ -371,6 +407,9 @@ async function checkOnce() {
   const items = entries.map(e => ({
     finalUrl: appendParams(toProductUrl(e.value), config.url_params),
     threshold: e.threshold,
+    useWarehouse: e.useWarehouse === null || e.useWarehouse === undefined ? DEFAULT_WAREHOUSE : e.useWarehouse,
+    allowStockAlerts: e.allowStockAlerts,
+    allowPriceAlerts: e.allowPriceAlerts,
   }))
   if (items.length === 0) {
     log('Scan skipped: no URLs found in urls.txt')
@@ -378,39 +417,56 @@ async function checkOnce() {
   }
   log(`Scan started: ${items.length} item(s)`) 
 
-  const state = loadWatch() // { [url]: { lastPrice, symbol, title, image } }
+  const state = loadWatch() // { [url]: { lastPrice, symbol, title, image, available, warehouse?, useWarehouse?, threshold? } }
   let sent = 0
   let errors = 0
 
   for (let i = 0; i < items.length; i++) {
-    const { finalUrl, threshold } = items[i]
+    const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts } = items[i]
     try {
       const $ = await fetchPage(finalUrl)
       if (!$) {
         errors++
         continue
       }
-      const info = await parseItem($, finalUrl)
+      const info = await parseItem($, finalUrl, useWarehouse)
       if (config.debug) dbg(`ASIN detected: ${extractAsin(finalUrl) || 'N/A'}`)
 
       const prev = state[finalUrl]
+      const alertsMode = allowStockAlerts && allowPriceAlerts ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
       state[finalUrl] = {
         lastPrice: info.lastPrice,
         symbol: info.symbol,
         title: info.title,
         image: info.image,
+        available: info.available || false,
         warehouse: info.warehouse || null,
         threshold: threshold,
+        useWarehouse: useWarehouse,
+        alerts: alertsMode,
       }
 
-      const prevPrice = prev?.warehouse && info.warehouse ? prev.warehouse.lastPrice : prev?.lastPrice
-      const newPrice = info?.warehouse ? info.warehouse.lastPrice : info.lastPrice
+      const usingWh = !!useWarehouse && !!info.warehouse
+      const prevPrice = usingWh ? prev?.warehouse?.lastPrice : prev?.lastPrice
+      const newPrice = usingWh ? info.warehouse.lastPrice : info.lastPrice
+      const prevAvail = usingWh ? prev?.warehouse?.available : prev?.available
+      const newAvail = usingWh ? info?.warehouse?.available : info.available
 
       const passesThreshold = threshold ? newPrice <= threshold : true
-      if (prev && newPrice > 0 && prevPrice > 0 && newPrice < prevPrice && passesThreshold) {
+      const isBackInStock = prev && (prevAvail === false || prevAvail === 0 || prevAvail === undefined) && newAvail === true
+
+      if (allowStockAlerts && isBackInStock && passesThreshold) {
+        await postWebhook({
+          title: `Back in stock for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
+          description: `Current Price: ${info.symbol}${newPrice.toFixed(2)}\n\n${finalUrl}`,
+          thumbnail: info.image ? { url: info.image } : undefined,
+          color: 0x0099ff,
+        })
+        sent++
+      } else if (allowPriceAlerts && prev && newPrice > 0 && prevPrice > 0 && newPrice < prevPrice && passesThreshold) {
         const diff = (prev.lastPrice - info.lastPrice).toFixed(2)
         await postWebhook({
-          title: `Price alert for "${info.title || 'N/A'}"${info.warehouse ? ' (Amazon Warehouse)' : ''}`,
+          title: `Price alert for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
           description: `Old Price: ${prev.symbol}${prevPrice.toFixed(2)}\nNew Price: ${info.symbol}${newPrice.toFixed(2)}\nDiff: ${info.symbol}${(prevPrice - newPrice).toFixed(2)}\n\n${finalUrl}`,
           thumbnail: info.image ? { url: info.image } : undefined,
           color: 0x00ff00,
@@ -418,6 +474,8 @@ async function checkOnce() {
         sent++
       } else if (prev && threshold && !(newPrice <= threshold) && config.debug) {
         dbg(`No alert due to threshold: current=${newPrice.toFixed(2)} > threshold=${threshold.toFixed(2)}`)
+      } else if (config.debug && !allowPriceAlerts && !allowStockAlerts) {
+        dbg('All alerts disabled for this item (alerts=none)')
       }
     } catch (e) {
       errors++

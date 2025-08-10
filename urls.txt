@@ -1,10 +1,18 @@
 # Put one product per line. Supports full product URLs or bare ASINs.
 # Comments start with # and blank lines are ignored.
-# Optional per-item threshold: append |PRICE to only alert when current price <= PRICE
-#   Examples:
-#   https://www.amazon.com/dp/B0XXXXX123|299.99
-#   B0XXXXX123|299
+# Optional per-item flags using key=value segments after the URL (order doesn't matter):
+# - threshold=PRICE
+# - warehouse=on|off
+# - alerts=stock|price|none   (default: both)
+# Examples:
+#   https://www.amazon.com/dp/B0XXXXX123|threshold=299.99
+#   https://www.amazon.com/dp/B0XXXXX123|warehouse=on
+#   https://www.amazon.com/dp/B0XXXXX123|threshold=299.99|warehouse=on
+#   https://www.amazon.com/dp/B0XXXXX123|alerts=stock
 
 # Examples:
 # https://www.amazon.com/dp/B0XXXXX123
 # B0XXXXX123
+# https://www.amazon.com/dp/B0XXXXX123|threshold=299.99|warehouse=on
+# https://www.amazon.com/dp/B0XXXXX123|warehouse=off
+# https://www.amazon.com/dp/B0XXXXX123|alerts=stock

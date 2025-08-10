@@ -28,14 +28,19 @@ Edit `config.json`:
 - `tld`: Amazon TLD (e.g., `com`, `ca`, `co.uk`)
 - `url_params`: Optional key/value query params appended to every request
 - `webhook_url`: Your Discord webhook URL (required to receive alerts)
-- `warehouse`: `true` to track the Amazon Warehouse offer when available
+- `default_warehouse`: `true` to use Amazon Warehouse offers by default when available (can be overridden per-item via `|wh`/`|nowh`)
 - `debug`: `true` for extra console detail
+
+Note: For backward compatibility, if `default_warehouse` is not set, the older `warehouse` key will be used as the default.
 
 Add products
 Edit `urls.txt`. One entry per line.
 - Supports full product URLs or bare ASINs
 - Lines starting with `#` are comments
-- Optional per-item threshold using `|PRICE`
+- Use readable key=value tokens after the URL, in any order:
+  - `threshold=PRICE` (alert only when current price <= PRICE)
+  - `warehouse=on|off` (override default Warehouse for this item)
+  - `alerts=stock|price|none` (default: both)
 
 Examples:
 ```
@@ -46,10 +51,23 @@ B0XXXXX123
 https://www.amazon.com/dp/B0XXXXX123
 
 # Only alert when price <= 299.99
-https://www.amazon.com/dp/B0XXXXX123|299.99
+https://www.amazon.com/dp/B0XXXXX123|threshold=299.99
 
 # ASIN with threshold
 B0XXXXX123|250
+
+# Include Warehouse for this item (overrides global config)
+https://www.amazon.com/dp/B0XXXXX123|warehouse=on
+
+# Combine threshold + Warehouse
+https://www.amazon.com/dp/B0XXXXX123|threshold=299.99|warehouse=on
+
+# Explicitly ignore Warehouse for this item
+https://www.amazon.com/dp/B0XXXXX123|warehouse=off
+
+# Stock-only (only back-in-stock alerts, no price-drop alerts)
+https://www.amazon.com/dp/B0XXXXX123|alerts=stock
+https://www.amazon.com/dp/B0XXXXX123|threshold=299.99|alerts=stock
 ```
 
 Run
@@ -63,7 +81,11 @@ Console will show a banner, then minimal logs:
 How Warehouse tracking works
 - For `/dp/ASIN` pages, the script requests with `aod=1` and parses offers
 - If the All Offers panel isn’t server-rendered, it makes one lightweight AOD ajax request for the same ASIN
-- When `warehouse: true`, comparisons use the Warehouse price if detected; otherwise they use the main price
+- When Warehouse is enabled (globally or via per-item `|wh`), comparisons and availability tracking use the Warehouse price if detected; otherwise they use the main price
+
+Back-in-stock notifications
+- The monitor tracks availability. If an item was previously unavailable and becomes available, it sends a "Back in stock" alert.
+- Availability is tracked per the active source (Warehouse vs main). Thresholds still apply to back-in-stock alerts.
 
 What’s stored in `watch.json`
 For each tracked URL (including applied params):
@@ -74,13 +96,16 @@ For each tracked URL (including applied params):
     "symbol": "$",
     "title": "Product Title",
     "image": "https://...jpg",
+    "available": true,
     "warehouse": {
       "seller": "Warehouse Deals",
       "price": "119.99",
       "lastPrice": 119.99,
-      "symbol": "$"
+      "symbol": "$",
+      "available": true
     },
-    "threshold": 120
+    "threshold": 120,
+    "useWarehouse": true
   }
 }
 ```
