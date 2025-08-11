@@ -4,6 +4,8 @@
 # - threshold=PRICE
 # - warehouse=on|off|only   (only = alert on Warehouse offers exclusively)
 # - alerts=stock|price|none   (default: both)
+# - label="Short Name"        (optional display name used in console/webhooks)
+# - notify=once               (send one alert per unique state; suppress duplicates until it changes)
 # Examples:
 #   https://www.amazon.com/dp/B0XXXXX123|threshold=299.99
 #   https://www.amazon.com/dp/B0XXXXX123|warehouse=on
@@ -15,4 +17,5 @@
 # B0XXXXX123
 # https://www.amazon.com/dp/B0XXXXX123|threshold=299.99|warehouse=on
 # https://www.amazon.com/dp/B0XXXXX123|warehouse=off
-# https://www.amazon.com/dp/B0XXXXX123|alerts=stock
+# https://www.amazon.com/dp/B0XXXXX123|warehouse=only|alerts=stock
+# https://www.amazon.com/dp/B0XXXXX123|label="VR2 Bundle"|notify=once

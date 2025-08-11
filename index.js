@@ -18,6 +18,21 @@ function dbg(msg) {
   if (config.debug) log(msg)
 }
 
+// Color helpers for readable console output
+const COLORS = {
+  reset: '\u001b[0m',
+  dim: '\u001b[2m',
+  cyan: '\u001b[36m',
+  green: '\u001b[32m',
+  yellow: '\u001b[33m',
+  magenta: '\u001b[35m',
+  red: '\u001b[31m',
+}
+
+function trace(msg) {
+  if (config.trace) log(msg)
+}
+
 function printBanner() {
   const reset = '\u001b[0m'
   const dim = '\u001b[2m'
@@ -266,7 +281,8 @@ async function parseItem($, url, includeWarehouse = DEFAULT_WAREHOUSE) {
         }
       }
     })
-    dbg(`AOD offers in DOM: ${$nodes.length}`)
+    // Reduce noisy traces by moving detailed AOD counts under config.trace instead of debug
+    if (config.trace) dbg(`AOD offers in DOM: ${$nodes.length}`)
     if (whDom) {
       dbg(`Matched Warehouse (DOM): ${whDom.seller} @ ${whDom.price || 'N/A'}`)
       return { ...base, warehouse: whDom }
@@ -279,7 +295,7 @@ async function parseItem($, url, includeWarehouse = DEFAULT_WAREHOUSE) {
       if ($aod) {
         let whAjax = null
         const $items = $aod('#aod-offer, .aod-offer')
-        dbg(`AOD offers via ajax: ${$items.length}`)
+        if (config.trace) dbg(`AOD offers via ajax: ${$items.length}`)
         $items.each(function () {
           if (whAjax) return
           const offer = $aod(this)
@@ -373,9 +389,17 @@ function readUrlsFile() {
         else if (v === 'price') { allowStockAlerts = false; allowPriceAlerts = true }
         else if (v === 'both' || v === 'all' || v === '') { allowStockAlerts = true; allowPriceAlerts = true }
         else if (v === 'none' || v === 'off') { allowStockAlerts = false; allowPriceAlerts = false }
+      } else if (key === 'label') {
+        // Allow any string; trim quotes if provided
+        const cleaned = val.replace(/^"|"$/g, '')
+        entries.push.__label = cleaned
+      } else if (key === 'notify' || key === 'notify_once') {
+        const v = val.toLowerCase()
+        if (['once', 'on', 'true', '1', 'yes', 'y'].includes(v)) entries.push.__notifyOnce = true
+        else if (['repeat', 'off', 'false', '0', 'no', 'n'].includes(v)) entries.push.__notifyOnce = false
       }
     }
-    entries.push({ value, threshold: threshold ?? null, useWarehouse, allowStockAlerts, allowPriceAlerts })
+    entries.push({ value, threshold: threshold ?? null, useWarehouse, allowStockAlerts, allowPriceAlerts, label: entries.push.__label || null, notifyOnce: entries.push.__notifyOnce || false })
   }
   return entries
 }
@@ -423,19 +447,21 @@ async function checkOnce() {
       : e.useWarehouse,
     allowStockAlerts: e.allowStockAlerts,
     allowPriceAlerts: e.allowPriceAlerts,
+    label: e.label || null,
+    notifyOnce: !!e.notifyOnce,
   }))
   if (items.length === 0) {
     log('Scan skipped: no URLs found in urls.txt')
     return
   }
-  log(`Scan started: ${items.length} item(s)`) 
+  console.log(`${COLORS.cyan}[${new Date().toLocaleTimeString()}] Scan started: ${items.length} item(s)${COLORS.reset}`)
 
   const state = loadWatch() // { [url]: { lastPrice, symbol, title, image, available, warehouse?, useWarehouse?, threshold? } }
   let sent = 0
   let errors = 0
 
   for (let i = 0; i < items.length; i++) {
-    const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts } = items[i]
+    const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce } = items[i]
     try {
       const $ = await fetchPage(finalUrl)
       if (!$) {
@@ -450,7 +476,8 @@ async function checkOnce() {
         const whTxt = useWarehouse === 'only' ? 'only' : (useWarehouse ? 'on' : 'off')
         const title = (info.title || '').trim()
         const titleShort = title.length > 80 ? title.slice(0, 77) + '...' : (title || 'N/A')
-        dbg(`ASIN detected: ${asin} | title="${titleShort}" | warehouse=${whTxt} | alerts=${alertsMode} | threshold=${thrTxt}`)
+        console.log(`${COLORS.magenta}[${new Date().toLocaleTimeString()}] ASIN: ${asin} | ${titleShort}${COLORS.reset}`)
+        console.log(`${COLORS.dim}  warehouse=${whTxt} | alerts=${alertsMode} | threshold=${thrTxt}${COLORS.reset}`)
       }
 
       const prev = state[finalUrl]
@@ -465,18 +492,62 @@ async function checkOnce() {
         threshold: threshold,
         useWarehouse: useWarehouse,
         alerts: alertsMode,
+        label: label || null,
+        notifyOnce: !!notifyOnce,
       }
 
-      const usingWh = (useWarehouse === 'only') ? !!info.warehouse : (!!useWarehouse && !!info.warehouse)
-      const prevPrice = usingWh ? prev?.warehouse?.lastPrice : prev?.lastPrice
-      const newPrice = usingWh ? info.warehouse.lastPrice : info.lastPrice
-      const prevAvail = usingWh ? prev?.warehouse?.available : prev?.available
-      const newAvail = usingWh ? info?.warehouse?.available : info.available
+      // Select comparison source based on per-item warehouse mode
+      const modeWarehouseOnly = useWarehouse === 'only'
+      const hasWarehouse = !!info.warehouse
+      let usingWh = false
+      let prevPrice = 0
+      let newPrice = 0
+      let prevAvail = false
+      let newAvail = false
 
-      const passesThreshold = threshold ? newPrice <= threshold : true
+      if (modeWarehouseOnly) {
+        // Track ONLY the Warehouse offer; ignore main offer entirely
+        usingWh = true
+        prevPrice = prev?.warehouse?.lastPrice ?? 0
+        newPrice = hasWarehouse ? info.warehouse.lastPrice : 0
+        prevAvail = !!(prev?.warehouse?.available)
+        newAvail = !!(hasWarehouse && info.warehouse.available)
+      } else if (useWarehouse) {
+        // Prefer Warehouse when present; otherwise fall back to main
+        usingWh = hasWarehouse
+        if (usingWh) {
+          prevPrice = prev?.warehouse?.lastPrice ?? 0
+          newPrice = info.warehouse.lastPrice
+          prevAvail = !!(prev?.warehouse?.available)
+          newAvail = !!info.warehouse.available
+        } else {
+          prevPrice = prev?.lastPrice ?? 0
+          newPrice = info.lastPrice
+          prevAvail = !!(prev?.available)
+          newAvail = !!info.available
+        }
+      } else {
+        // Main-only
+        usingWh = false
+        prevPrice = prev?.lastPrice ?? 0
+        newPrice = info.lastPrice
+        prevAvail = !!(prev?.available)
+        newAvail = !!info.available
+      }
+
+      const passesThreshold = threshold ? (newPrice > 0 && newPrice <= threshold) : true
       const isBackInStock = prev && (prevAvail === false || prevAvail === 0 || prevAvail === undefined) && newAvail === true
 
       const whOnly = useWarehouse === 'only'
+      // If source went unavailable, clear lastNotified so a future restock notifies again
+      if (notifyOnce && prev && prev.lastNotified && newAvail === false) {
+        state[finalUrl].lastNotified = null
+      }
+      // Build a notify signature to avoid duplicate alerts when notifyOnce=true
+      const sourceKey = usingWh ? 'warehouse' : 'main'
+      const signature = `${sourceKey}|avail:${newAvail ? 1 : 0}|price:${Math.round(newPrice * 100)}`
+      const lastSig = prev?.lastNotified
+
       if (allowStockAlerts && isBackInStock && passesThreshold) {
         let desc = `Current Price: ${info.symbol}${newPrice.toFixed(2)}`
         if (usingWh) {
@@ -486,22 +557,29 @@ async function checkOnce() {
             desc = `Warehouse Price: ${info.symbol}${newPrice.toFixed(2)}\nMain Price: ${info.symbol}${mainPrice.toFixed(2)}\nSavings vs Main: ${info.symbol}${diff}`
           }
         }
-        await postWebhook({
+        const titleLine = label ? `${label}` : `${info.title || 'N/A'}`
+        if (!notifyOnce || signature !== lastSig) {
+          await postWebhook({
           title: `Back in stock for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
           description: `${desc}\n\n${finalUrl}`,
           thumbnail: info.image ? { url: info.image } : undefined,
           color: 0x0099ff,
-        })
-        sent++
+          })
+          sent++
+          state[finalUrl].lastNotified = signature
+        }
       } else if (allowPriceAlerts && prev && newPrice > 0 && prevPrice > 0 && newPrice < prevPrice && passesThreshold) {
         const diff = (prev.lastPrice - info.lastPrice).toFixed(2)
-        await postWebhook({
+        if (!notifyOnce || signature !== lastSig) {
+          await postWebhook({
           title: `Price alert for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
           description: `Old Price: ${prev.symbol}${prevPrice.toFixed(2)}\nNew Price: ${info.symbol}${newPrice.toFixed(2)}\nDiff: ${info.symbol}${(prevPrice - newPrice).toFixed(2)}\n\n${finalUrl}`,
           thumbnail: info.image ? { url: info.image } : undefined,
           color: 0x00ff00,
-        })
-        sent++
+          })
+          sent++
+          state[finalUrl].lastNotified = signature
+        }
       } else if (prev && threshold && !(newPrice <= threshold) && config.debug) {
         dbg(`No alert due to threshold: current=${newPrice.toFixed(2)} > threshold=${threshold.toFixed(2)}`)
       } else if (config.debug && !allowPriceAlerts && !allowStockAlerts) {
@@ -513,7 +591,7 @@ async function checkOnce() {
 
     // Be polite between requests to reduce detection (skip after last item)
     if (i < items.length - 1) {
-      if (config.debug) log(`Waiting ${secondsBetweenCheck} seconds before next product...`)
+      if (config.debug) console.log(`${COLORS.yellow}[${new Date().toLocaleTimeString()}] Waiting ${secondsBetweenCheck} seconds before next product...${COLORS.reset}`)
       await new Promise(r => setTimeout(r, secondsBetweenCheck * 1000))
     }
   }
@@ -531,7 +609,7 @@ async function checkOnce() {
 
   saveWatch(state)
   const pruneMsg = pruned > 0 ? `, pruned=${pruned}` : ''
-  log(`Scan complete: notifications sent=${sent}, errors=${errors}${pruneMsg}. Next in ${minutesPerCheck} min`)
+  console.log(`${COLORS.green}[${new Date().toLocaleTimeString()}] Scan complete: notifications sent=${sent}, errors=${errors}${pruneMsg}. Next in ${minutesPerCheck} min${COLORS.reset}`)
 }
 
 async function main() {

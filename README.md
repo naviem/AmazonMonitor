@@ -17,9 +17,19 @@ Requirements
 
 Install
 ```
-cd simple-monitor
+git clone https://github.com/naviem/AmazonMonitor.git
+cd AmazonMonitor
 npm install
 ```
+
+Quick Start (for non-technical users)
+1) Open `config.json` and paste your Discord webhook URL into `webhook_url`
+2) Open `urls.txt` and add your Amazon links (or ASINs), one per line
+3) Start the monitor:
+```
+node index.js
+```
+You’ll see colorful messages as it scans. Alerts go to your Discord.
 
 Configure
 Edit `config.json`:
@@ -28,8 +38,8 @@ Edit `config.json`:
 - `tld`: Amazon TLD (e.g., `com`, `ca`, `co.uk`)
 - `url_params`: Optional key/value query params appended to every request
 - `webhook_url`: Your Discord webhook URL (required to receive alerts)
-- `default_warehouse`: `true` to use Amazon Warehouse offers by default when available (can be overridden per-item via `|wh`/`|nowh`)
-  - You can also set per-item `warehouse=only` to alert only on Warehouse availability/price and ignore the main offer
+- `default_warehouse`: `true` to use Amazon Warehouse offers by default when available (override per item using `warehouse=on|off|only` in `urls.txt`)
+  - Example per-item override: `...|warehouse=only` alerts only on Warehouse availability/price and ignores the main offer
 - `debug`: `true` for extra console detail
 
 Note: For backward compatibility, if `default_warehouse` is not set, the older `warehouse` key will be used as the default.
@@ -42,6 +52,8 @@ Edit `urls.txt`. One entry per line.
   - `threshold=PRICE` (alert only when current price <= PRICE)
   - `warehouse=on|off|only` (override default Warehouse for this item; `only` = only consider Warehouse offers)
   - `alerts=stock|price|none` (default: both)
+  - `label=Your Short Name` (optional display name in console/webhooks)
+  - `notify=once` (send one alert per unique state; suppress duplicates until price/availability changes)
 
 Examples:
 ```
@@ -69,20 +81,25 @@ https://www.amazon.com/dp/B0XXXXX123|warehouse=off
 # Stock-only (only back-in-stock alerts, no price-drop alerts)
 https://www.amazon.com/dp/B0XXXXX123|alerts=stock
 https://www.amazon.com/dp/B0XXXXX123|threshold=299.99|alerts=stock
+
+# Optional label and notify-once
+https://www.amazon.com/dp/B0XXXXX123|label="VR2 Bundle"|notify=once
 ```
 
 Run
 ```
 node index.js
 ```
-Console will show a banner, then minimal logs:
-- Scan started (timestamp)
-- Scan complete summary (notifications, errors, pruned, next scan)
+What you’ll see in the console:
+- Scan started (time and how many items)
+- For each product: ASIN and title (and your `label` if set)
+- A short waiting message between products
+- Scan complete summary (how many alerts, errors, and when the next scan is)
 
 How Warehouse tracking works
 - For `/dp/ASIN` pages, the script requests with `aod=1` and parses offers
 - If the All Offers panel isn’t server-rendered, it makes one lightweight AOD ajax request for the same ASIN
-- When Warehouse is enabled (globally or via per-item `|wh`), comparisons and availability tracking use the Warehouse price if detected; otherwise they use the main price
+- When Warehouse is enabled (globally or per-item via `warehouse=on|only`), comparisons and availability tracking use the Warehouse price if detected; otherwise they use the main price (unless `only`)
 
 Back-in-stock notifications
 - The monitor tracks availability. If an item was previously unavailable and becomes available, it sends a "Back in stock" alert.
@@ -107,11 +124,21 @@ For each tracked URL (including applied params):
       "available": true
     },
     "threshold": 120,
-    "useWarehouse": true
+    "useWarehouse": true,
+    "alerts": "both",
+    "label": "VR2 Bundle",
+    "notifyOnce": true,
+    "lastNotified": "warehouse|avail:1|price:11999"
   }
 }
 ```
 - Remove an item from `urls.txt` and it will be pruned from `watch.json` on the next scan
+
+Troubleshooting
+- “Error: No webhook_url configured” → Open `config.json` and paste your Discord webhook URL
+- “Scan skipped: no URLs found in urls.txt” → Add at least one product line to `urls.txt`
+- Warnings about tokens or values in `urls.txt` → Fix the line (e.g., `threshold=299.99`, `warehouse=on|off|only`, `alerts=stock|price|none`)
+- No messages for a specific item → If you used `alerts=none` or `notify=once`, it may be intentionally quiet until the state changes
 
 Tips to reduce bot detection
 - Keep default timings (>= 10 min scans, >= 60s between items)
