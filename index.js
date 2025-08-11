@@ -408,7 +408,13 @@ async function postWebhook(embed) {
 }
 
 async function checkOnce() {
-  const entries = readUrlsFile()
+  if (!config.webhook_url) {
+    log('Error: No webhook_url configured. Set config.webhook_url to receive notifications.')
+  }
+  const result = readUrlsFile()
+  const entries = Array.isArray(result) ? result : result.entries
+  const issues = Array.isArray(result) ? [] : (result.issues || [])
+  for (const msg of issues) log(msg)
   const items = entries.map(e => ({
     finalUrl: appendParams(toProductUrl(e.value), config.url_params),
     threshold: e.threshold,
@@ -441,8 +447,10 @@ async function checkOnce() {
         const asin = extractAsin(finalUrl) || 'N/A'
         const alertsMode = (allowStockAlerts && allowPriceAlerts) ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
         const thrTxt = (typeof threshold === 'number' && !isNaN(threshold)) ? threshold.toFixed(2) : 'none'
-        const whTxt = useWarehouse ? 'on' : 'off'
-        dbg(`ASIN detected: ${asin} | warehouse=${whTxt} | alerts=${alertsMode} | threshold=${thrTxt}`)
+        const whTxt = useWarehouse === 'only' ? 'only' : (useWarehouse ? 'on' : 'off')
+        const title = (info.title || '').trim()
+        const titleShort = title.length > 80 ? title.slice(0, 77) + '...' : (title || 'N/A')
+        dbg(`ASIN detected: ${asin} | title="${titleShort}" | warehouse=${whTxt} | alerts=${alertsMode} | threshold=${thrTxt}`)
       }
 
       const prev = state[finalUrl]
@@ -505,6 +513,7 @@ async function checkOnce() {
 
     // Be polite between requests to reduce detection (skip after last item)
     if (i < items.length - 1) {
+      if (config.debug) log(`Waiting ${secondsBetweenCheck} seconds before next product...`)
       await new Promise(r => setTimeout(r, secondsBetweenCheck * 1000))
     }
   }
