@@ -365,6 +365,8 @@ function readUrlsFile() {
     let useWarehouse = null // null = use global default
     let allowStockAlerts = true
     let allowPriceAlerts = true
+    let labelToken = null
+    let notifyOnceToken = null
     for (let i = 1; i < parts.length; i++) {
       const token = parts[i]
       if (!token) continue
@@ -390,16 +392,17 @@ function readUrlsFile() {
         else if (v === 'both' || v === 'all' || v === '') { allowStockAlerts = true; allowPriceAlerts = true }
         else if (v === 'none' || v === 'off') { allowStockAlerts = false; allowPriceAlerts = false }
       } else if (key === 'label') {
-        // Allow any string; trim quotes if provided
-        const cleaned = val.replace(/^"|"$/g, '')
-        entries.push.__label = cleaned
+        labelToken = val
       } else if (key === 'notify' || key === 'notify_once') {
-        const v = val.toLowerCase()
-        if (['once', 'on', 'true', '1', 'yes', 'y'].includes(v)) entries.push.__notifyOnce = true
-        else if (['repeat', 'off', 'false', '0', 'no', 'n'].includes(v)) entries.push.__notifyOnce = false
+        notifyOnceToken = val
       }
     }
-    entries.push({ value, threshold: threshold ?? null, useWarehouse, allowStockAlerts, allowPriceAlerts, label: entries.push.__label || null, notifyOnce: entries.push.__notifyOnce || false })
+    const label = labelToken ? labelToken.replace(/^"|"$/g, '') : null
+    const nv = (notifyOnceToken || '').toLowerCase()
+    const notifyOnce = ['once', 'on', 'true', '1', 'yes', 'y'].includes(nv) ? true
+      : ['repeat', 'off', 'false', '0', 'no', 'n'].includes(nv) ? false
+      : false
+    entries.push({ value, threshold: threshold ?? null, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce })
   }
   return entries
 }
@@ -539,6 +542,18 @@ async function checkOnce() {
       const isBackInStock = prev && (prevAvail === false || prevAvail === 0 || prevAvail === undefined) && newAvail === true
 
       const whOnly = useWarehouse === 'only'
+      // Status line so users see why there may be no notifications yet
+      if (config.debug) {
+        const src = usingWh ? 'Warehouse' : 'Main'
+        const priceTxt = newPrice > 0 ? `${info.symbol}${newPrice.toFixed(2)}` : 'N/A'
+        const stockTxt = newAvail ? `${COLORS.green}IN STOCK${COLORS.reset}` : `${COLORS.red}OUT OF STOCK${COLORS.reset}`
+        let extra = ''
+        if (typeof threshold === 'number' && !isNaN(threshold)) {
+          const thrTxt = `${info.symbol}${threshold.toFixed(2)}`
+          extra = ` | threshold=${thrTxt} ${passesThreshold ? '(met)' : '(not met)'}`
+        }
+        console.log(`${COLORS.dim}  status: ${stockTxt} | source=${src} | price=${priceTxt}${extra}${COLORS.reset}`)
+      }
       // If source went unavailable, clear lastNotified so a future restock notifies again
       if (notifyOnce && prev && prev.lastNotified && newAvail === false) {
         state[finalUrl].lastNotified = null
