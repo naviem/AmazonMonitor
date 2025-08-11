@@ -185,13 +185,13 @@ async function fetchAodHtml(asin) {
   }
   for (const url of urls) {
     try {
-      dbg(`Fetching AOD endpoint: ${url}`)
+      if (config.trace) dbg(`Fetching AOD endpoint: ${url}`)
       const res = await fetch(url, { headers, redirect: 'follow' })
       if (!res.ok) continue
       const html = await res.text()
       const $ = load(html)
       const count = $('#aod-offer, .aod-offer').length
-      dbg(`AOD endpoint returned ${count} offers`)
+      if (config.trace) dbg(`AOD endpoint returned ${count} offers`)
       if (count > 0) return $
     } catch {}
   }
@@ -474,8 +474,8 @@ async function checkOnce() {
         const alertsMode = (allowStockAlerts && allowPriceAlerts) ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
         const thrTxt = (typeof threshold === 'number' && !isNaN(threshold)) ? threshold.toFixed(2) : 'none'
         const whTxt = useWarehouse === 'only' ? 'only' : (useWarehouse ? 'on' : 'off')
-        const title = (info.title || '').trim()
-        const titleShort = title.length > 80 ? title.slice(0, 77) + '...' : (title || 'N/A')
+        const displayTitle = (label && label.trim().length > 0) ? label.trim() : (info.title || '').trim()
+        const titleShort = displayTitle.length > 80 ? displayTitle.slice(0, 77) + '...' : (displayTitle || 'N/A')
         console.log(`${COLORS.magenta}[${new Date().toLocaleTimeString()}] ASIN: ${asin} | ${titleShort}${COLORS.reset}`)
         console.log(`${COLORS.dim}  warehouse=${whTxt} | alerts=${alertsMode} | threshold=${thrTxt}${COLORS.reset}`)
       }
