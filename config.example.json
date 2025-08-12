@@ -6,5 +6,7 @@
   "webhook_url": "",
   "warehouse": false,
   "debug": true
+  "server": false,
+  "port": 3000
 }
 

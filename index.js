@@ -1,4 +1,5 @@
 import fs from 'fs'
+import http from 'http'
 import { load } from 'cheerio'
 
 const config = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url)).toString())
@@ -87,6 +88,274 @@ const userAgents = [
 const STABLE_UA = userAgents[Math.floor(Math.random() * userAgents.length)]
 // Soft-ban cooldown end timestamp (ms since epoch); when > now, scans are skipped
 let softBanUntil = 0
+let lastScanAt = 0
+const HISTORY_MAX = 20
+
+function renderDashboardHtml() {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amazon Monitor</title>
+  <style>
+    :root{--bg:#0b0f14;--panel:#0f1420;--muted:#9fb0c2;--line:#1e2a3a;--fg:#e6edf3;--link:#58a6ff;--chip:#142032;--ok:#33d17a;--out:#f85149}
+    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+    .container{max-width:1180px;margin:18px auto;padding:0 18px}
+    .meta{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;color:var(--muted)}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+    table{width:100%;border-collapse:separate;border-spacing:0 8px}
+    thead th{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:10px 12px}
+    tbody td{background:#0f1624;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px}
+    tbody tr td:first-child{border-left:1px solid var(--line);border-top-left-radius:10px;border-bottom-left-radius:10px}
+    tbody tr td:last-child{border-right:1px solid var(--line);border-top-right-radius:10px;border-bottom-right-radius:10px}
+    a{color:var(--link);text-decoration:none}
+    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .title{font-size:20px;font-weight:700}
+    .toolbar{display:flex;gap:10px;flex-wrap:wrap}
+    .btn{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:#121b2b;color:var(--fg);cursor:pointer}
+    .btn.primary{background:#1a2f5a;border-color:#25447e}
+    input,select{padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0b1220;color:var(--fg)}
+    .muted{color:var(--muted)}
+    .tag{background:var(--chip);border:1px solid var(--line);color:var(--muted);padding:2px 8px;border-radius:999px;font-size:12px}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
+  </style>
+  </head>
+  <body>
+    <div class="container">
+    <div class="header">
+      <div class="title">Amazon Monitor</div>
+      <div class="toolbar">
+        <input id="q" placeholder="Search label or URL" />
+        <button id="btn_scan" class="btn primary">Scan now</button>
+        <button id="btn_reload" class="btn">Reload</button>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="card">
+        <div class="meta" id="status">Loading status…</div>
+      </div>
+    <div class="card" style="margin-top:12px">
+        <table>
+          <thead>
+            <tr>
+              <th>Group</th>
+              <th>Label</th>
+              <th>URL</th>
+              <th>Source</th>
+              <th>Status</th>
+              <th>Price</th>
+              <th>Threshold</th>
+              <th>Warehouse</th>
+              <th>Alerts</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="items"><tr><td class="muted" colspan="10">Loading items…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2 style="margin:0 0 8px;font-size:16px;color:#a0b3c6">Add item</h2>
+        <form id="addForm" onsubmit="return false" class="meta">
+          <input id="f_url" placeholder="URL or ASIN" style="flex:2;min-width:260px" title="Paste a product link or 10‑char ASIN"/>
+          <input id="f_label" placeholder="Label (optional)" style="flex:1;min-width:160px" title="Short name for this item"/>
+          <select id="f_wh" title="Warehouse: on = prefer Warehouse; off = ignore; only = alert only on Warehouse">
+            <option value="">warehouse: default</option>
+            <option value="on">warehouse: on</option>
+            <option value="off">warehouse: off</option>
+            <option value="only">warehouse: only</option>
+          </select>
+          <select id="f_alerts" title="Alerts: stock = back‑in‑stock only; price = price‑drop only; none = mute">
+            <option value="">alerts: both (default)</option>
+            <option value="stock">alerts: stock</option>
+            <option value="price">alerts: price</option>
+            <option value="none">alerts: none</option>
+          </select>
+          <input id="f_threshold" type="number" step="0.01" placeholder="threshold $ (optional)" style="width:150px" title="Only alert when the current price is less than or equal to this value"/>
+          <input id="f_drop" type="number" step="1" min="1" max="90" placeholder="drop % (optional)" style="width:130px" title="Percent drop vs baseline"/>
+          <select id="f_base" title="Baseline for drop% rule">
+            <option value="">baseline: last</option>
+            <option value="last">last</option>
+            <option value="lowest">lowest</option>
+            <option value="start">start</option>
+          </select>
+          <button id="btn_add" class="btn primary">Add</button>
+        </form>
+        <details class="meta"><summary class="muted">What do these options mean?</summary>
+          <div class="muted">• <b>URL or ASIN</b>: Paste a full Amazon product link, or the 10‑character product code (ASIN). Example ASIN: B0XXXXXX00.</div>
+          <div class="muted">• <b>Label</b>: A short name you choose so the item is easy to recognize in the console and in Discord messages. Optional.</div>
+          <div class="muted">• <b>Group</b>: Optional tag to organize items (for example “Consoles”, “Food”). You can filter by group later.</div>
+          <div class="muted">• <b>Warehouse</b>:
+             “on” = use Amazon Warehouse price when it exists (otherwise use the main price),
+             “off” = ignore Warehouse and always use the main price,
+             “only” = alert only for Warehouse offers.</div>
+          <div class="muted">• <b>Alerts</b>:
+             “both” (default) = get price‑drop and back‑in‑stock alerts,
+             “stock” = only when it comes back in stock,
+             “price” = only when the price goes down,
+             “none” = no alerts for this item.</div>
+          <div class="muted">• <b>Threshold $</b>: A maximum price. The app will only alert when the current price is less than or equal to this number.</div>
+          <div class="muted">• <b>Drop %</b>: A relative rule. Example: 10 means “alert when the price is at least ten percent lower than the baseline price”.</div>
+          <div class="muted">• <b>Baseline</b>: What “drop %” compares against. “last” (default) = compare to the last seen price, “lowest” = compare to the best price we have ever recorded, “start” = compare to the first price we saw for this item.</div>
+          <div class="muted">• <b>Source / Status / Price</b>: Shows whether the app is using the main offer or a Warehouse offer, whether it is in stock, and the latest price seen.</div>
+          <div class="muted">• <b>Scan now</b>: Runs a scan immediately. It does not change your regular schedule.</div>
+          <div class="muted">• <b>Soft‑ban safety</b>: If Amazon returns a CAPTCHA or a rate‑limit page, the app pauses scanning for about 30 minutes to cool down.</div>
+        </details>
+      </div>
+    </div>
+    </div>
+    <script>
+      async function api(method, path, body){
+        const res = await fetch(path,{method,headers:{'Content-Type':'application/json'},body: body? JSON.stringify(body): undefined})
+        const ct = res.headers.get('content-type')||''
+        return ct.includes('application/json')? res.json(): res.text()
+      }
+      async function load() {
+        try {
+          const s = await fetch('/api/status').then(r=>r.json())
+          const items = await fetch('/api/items').then(r=>r.json()).then(x=>x.items||[])
+          const fmt = ms=> ms>0 ? Math.ceil(ms/60000)+' min' : '0 min'
+          const last = s.lastScanAt ? new Date(s.lastScanAt).toLocaleTimeString() : 'N/A'
+          document.getElementById('status').innerHTML = \`
+            <div><span class=\"muted\">Last scan:</span> \${last}</div>
+            <div><span class=\"muted\">Next scan in:</span> \${fmt(s.nextScanInMs||0)}</div>
+            <div><span class=\"muted\">Cooldown:</span> \${s.coolingMs>0?'\<span class=\\\"warn\\\">'+fmt(s.coolingMs)+'\</span>':'\<span class=\\\"ok\\\">none\</span>'}</div>
+            <div><span class=\"muted\">Schedule:</span> every \${s.minutesPerCheck} min, \${s.secondsBetweenCheck}s between items</div>
+          \`
+        const tbody = document.getElementById('items')
+          if (!items.length) { tbody.innerHTML = '<tr><td class="muted" colspan="10">No items found</td></tr>'; return }
+          tbody.innerHTML = items.map(it=>{
+            const short = it.url.length>60 ? it.url.slice(0,57)+'…' : it.url
+            const thr = (it.threshold!=null && !Number.isNaN(Number(it.threshold))) ? ('$'+Number(it.threshold).toFixed(2)) : '<span class="muted">—</span>'
+            const src = it.current && it.current.source ? it.current.source : 'main'
+            const price = it.current && it.current.price ? (it.current.symbol||'$')+Number(it.current.price).toFixed(2) : '—'
+            const status = it.current && it.current.available ? '<span class="ok">IN STOCK</span>' : '<span class="muted">OUT</span>'
+            return \`<tr>
+              <td>\${it.group ? '<span class=\\\"tag\\\">'+it.group+'</span>' : '<span class=\\\"muted\\\">—</span>'}</td>
+              <td>\${it.label?it.label:'<span class=\\\"muted\\\">(none)</span>'}</td>
+              <td><a href=\"\${it.url}\" target=\"_blank\" rel=\"noreferrer\">\${short}</a></td>
+              <td><span class=\"tag\">\${src}</span></td>
+              <td>\${status}</td>
+              <td>\${price}</td>
+              <td>\${thr}</td>
+              <td><span class=\"tag\">\${it.warehouse}</span></td>
+              <td><span class=\"tag\">\${it.alerts}</span></td>
+            <td><button data-asin=\"\${it.asin}\" class=\"hist btn\">History</button> <button data-asin=\"\${it.asin}\" class=\"edit btn\">Edit</button> <button data-asin=\"\${it.asin}\" class=\"del btn\">Delete</button></td>
+            </tr>\`
+          }).join('')
+        // history viewer
+        function spark(values){
+          if(!values || values.length===0) return '<span class="muted">No history yet</span>'
+          const w=320,h=48; const min=Math.min(...values), max=Math.max(...values); const r=max-min||1
+          const pts=values.map((v,i)=>{const x=(i/(values.length-1))*w; const y=h-((v-min)/r)*h; return x.toFixed(1)+','+y.toFixed(1)}).join(' ')
+          return '<svg width="'+w+'" height="'+h+'"><polyline fill="none" stroke="#58a6ff" stroke-width="2" points="'+pts+'"/></svg>'
+        }
+        document.querySelectorAll('button.hist').forEach(btn=>{
+          btn.onclick = async ()=>{
+            const asin = btn.getAttribute('data-asin'); if(!asin) return
+            const data = await api('GET','/api/history?asin='+encodeURIComponent(asin))
+            const row = btn.closest('tr'); if(!row) return
+            const old=document.querySelector('tr.viewer'); if(old) old.remove()
+            const prices=(data.history||[]).map(e=>Number(e.price||0)).filter(n=>n>0)
+            const ls=data.lowestSeen? ((data.symbol||'$')+Number(data.lowestSeen.price||0).toFixed(2)+' ('+data.lowestSeen.source+')') : '—'
+            const tr=document.createElement('tr'); tr.className='viewer'
+            tr.innerHTML='<td colspan="10"><div class="meta"><div>'+spark(prices)+'</div><div class="muted">Lowest ever: '+ls+'</div></div></td>'
+            row.after(tr)
+          }
+        })
+
+          // wire delete
+          document.querySelectorAll('button.del').forEach(btn=>{
+            btn.onclick = async ()=>{
+              const asin = btn.getAttribute('data-asin')
+              if (!asin) return
+              if (!confirm('Delete this item?')) return
+              await api('DELETE','/api/items?asin='+encodeURIComponent(asin))
+              load()
+            }
+          })
+          // wire edit
+          document.querySelectorAll('button.edit').forEach(btn=>{
+            btn.onclick = ()=>{
+              const asin = btn.getAttribute('data-asin')
+              const it = items.find(x=>x.asin===asin); if(!it) return
+              const row = btn.closest('tr'); if(!row) return
+              const old = document.querySelector('tr.editor'); if(old) old.remove()
+              const tr = document.createElement('tr'); tr.className='editor'
+              const thrVal = (it.threshold!=null && !isNaN(Number(it.threshold))) ? Number(it.threshold).toFixed(2) : ''
+              tr.innerHTML = '<td colspan="10">'
+                + '<div class="meta">'
+                + '<input id="e_label" value="'+(it.label||'')+'" placeholder="Label"/>'
+                + '<input id="e_group" value="'+(it.group||'')+'" placeholder="Group"/>'
+                + '<select id="e_wh">'
+                +   '<option value="">warehouse: default</option>'
+                +   '<option value="on"'+(it.warehouse==='on'?' selected':'')+'>warehouse: on</option>'
+                +   '<option value="off"'+(it.warehouse==='off'?' selected':'')+'>warehouse: off</option>'
+                +   '<option value="only"'+(it.warehouse==='only'?' selected':'')+'>warehouse: only</option>'
+                + '</select>'
+                + '<select id="e_alerts">'
+                +   '<option value=""'+(it.alerts==='both'?' selected':'')+'>alerts: both</option>'
+                +   '<option value="stock"'+(it.alerts==='stock'?' selected':'')+'>stock</option>'
+                +   '<option value="price"'+(it.alerts==='price'?' selected':'')+'>price</option>'
+                +   '<option value="none"'+(it.alerts==='none'?' selected':'')+'>none</option>'
+                + '</select>'
+                + '<input id="e_threshold" type="number" step="0.01" value="'+thrVal+'" placeholder="threshold $"/>'
+                + '<input id="e_drop" type="number" step="1" min="1" max="90" value="'+(it.thresholdDrop||'')+'" placeholder="drop %"/>'
+                + '<select id="e_baseline">'
+                +   '<option value=""'+(!it.baseline?' selected':'')+'>baseline: last</option>'
+                +   '<option value="last"'+(it.baseline==='last'?' selected':'')+'>last</option>'
+                +   '<option value="lowest"'+(it.baseline==='lowest'?' selected':'')+'>lowest</option>'
+                +   '<option value="start"'+(it.baseline==='start'?' selected':'')+'>start</option>'
+                + '</select>'
+                + '<button id="e_save" class="btn primary">Save</button>'
+                + '<button id="e_cancel" class="btn">Cancel</button>'
+                + '</div>'
+                + '</td>'
+              row.after(tr)
+              document.getElementById('e_cancel').onclick = ()=> tr.remove()
+              document.getElementById('e_save').onclick = async ()=>{
+                const payload = { asin }
+                const lab=document.getElementById('e_label').value.trim(); if(lab) payload.label=lab
+                const grp=document.getElementById('e_group').value.trim(); if(grp) payload.group=grp
+                const wh=document.getElementById('e_wh').value; if(wh) payload.warehouse=wh
+                const al=document.getElementById('e_alerts').value; if(al) payload.alerts=al
+                const th=document.getElementById('e_threshold').value; if(th) payload.threshold=Number(th)
+                const dp=document.getElementById('e_drop').value; if(dp) payload.thresholdDrop=Number(dp)
+                const bs=document.getElementById('e_baseline').value; if(bs) payload.baseline=bs
+                const res = await api('PUT','/api/items', payload)
+                if(res && res.error){ alert(res.error) } else { tr.remove(); load() }
+              }
+            }
+          })
+        } catch(e) {
+          document.getElementById('status').innerHTML = '<span class="warn">Failed to load status</span>'
+        }
+      }
+      // refresh only when no editor is open
+      load();
+      setInterval(()=>{ if(!document.querySelector('tr.editor')) load() }, 8000)
+
+      // add form
+      document.getElementById('btn_add').onclick = async ()=>{
+        const url = document.getElementById('f_url').value.trim()
+        if(!url){ alert('Please enter a URL or ASIN'); return }
+        const body = { urlOrAsin: url }
+        const label = document.getElementById('f_label').value.trim(); if(label) body.label = label
+        const wh = document.getElementById('f_wh').value; if(wh) body.warehouse = wh
+        const al = document.getElementById('f_alerts').value; if(al) body.alerts = al
+        const th = document.getElementById('f_threshold').value; if(th) body.threshold = Number(th)
+        const dpEl = document.getElementById('f_drop'); if(dpEl && dpEl.value) body.thresholdDrop = Number(dpEl.value)
+        const bsEl = document.getElementById('f_base'); if(bsEl && bsEl.value) body.baseline = bsEl.value
+        const res = await api('POST','/api/items', body)
+        if(res && res.error){ alert(res.error) }
+        else { document.getElementById('addForm').reset(); load() }
+      }
+      document.getElementById('btn_reload').onclick = ()=> load()
+      document.getElementById('btn_scan').onclick = async ()=>{ await api('POST','/api/scan'); setTimeout(load, 1500) }
+    </script>
+  </body>
+  </html>`
+}
 
 function getLocaleCookieForTld(tld) {
   switch (tld) {
@@ -389,11 +658,14 @@ function readUrlsFile() {
     const parts = l.split('|').map(x => x.trim())
     const value = parts[0]
     let threshold = null
+    let thresholdDrop = null // percent
+    let baseline = null // 'last' | 'lowest' | 'start'
     let useWarehouse = null // null = use global default
     let allowStockAlerts = true
     let allowPriceAlerts = true
     let labelToken = null
     let notifyOnceToken = null
+    let groupToken = null
     for (let i = 1; i < parts.length; i++) {
       const token = parts[i]
       if (!token) continue
@@ -404,6 +676,13 @@ function readUrlsFile() {
       if (key === 'threshold') {
         const n = parseFloat(val)
         if (!isNaN(n)) threshold = n
+      } else if (key === 'threshold_drop' || key === 'drop') {
+        const v = String(val).replace(/%/g, '')
+        const n = parseFloat(v)
+        if (!isNaN(n) && n > 0) thresholdDrop = n
+      } else if (key === 'baseline') {
+        const v = String(val).toLowerCase()
+        if (['last','lowest','start'].includes(v)) baseline = v
       } else if (key === 'warehouse') {
         const v = val.toLowerCase()
         if (['only', 'strict', 'wh-only', 'warehouse-only', 'onlywh', 'only-warehouse'].includes(v)) {
@@ -422,6 +701,8 @@ function readUrlsFile() {
         labelToken = val
       } else if (key === 'notify' || key === 'notify_once') {
         notifyOnceToken = val
+      } else if (key === 'group') {
+        groupToken = val
       }
     }
     const label = labelToken ? labelToken.replace(/^"|"$/g, '') : null
@@ -429,7 +710,8 @@ function readUrlsFile() {
     const notifyOnce = ['once', 'on', 'true', '1', 'yes', 'y'].includes(nv) ? true
       : ['repeat', 'off', 'false', '0', 'no', 'n'].includes(nv) ? false
       : false
-    entries.push({ value, threshold: threshold ?? null, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce })
+    const group = groupToken ? groupToken.replace(/^"|"$/g, '') : null
+    entries.push({ value, threshold: threshold ?? null, thresholdDrop: thresholdDrop ?? null, baseline: baseline || null, useWarehouse, allowStockAlerts, allowPriceAlerts, label, group, notifyOnce })
   }
   return entries
 }
@@ -479,12 +761,15 @@ async function checkOnce() {
   const items = entries.map(e => ({
     finalUrl: appendParams(toProductUrl(e.value), config.url_params),
     threshold: e.threshold,
+    thresholdDrop: e.thresholdDrop,
+    baseline: e.baseline,
     useWarehouse: (e.useWarehouse === null || e.useWarehouse === undefined)
       ? DEFAULT_WAREHOUSE
       : e.useWarehouse,
     allowStockAlerts: e.allowStockAlerts,
     allowPriceAlerts: e.allowPriceAlerts,
     label: e.label || null,
+    group: e.group || null,
     notifyOnce: !!e.notifyOnce,
   }))
   if (items.length === 0) {
@@ -524,10 +809,15 @@ async function checkOnce() {
         available: info.available || false,
         warehouse: info.warehouse || null,
         threshold: threshold,
+        thresholdDrop: items[i].thresholdDrop || null,
+        baseline: items[i].baseline || null,
         useWarehouse: useWarehouse,
         alerts: alertsMode,
         label: label || null,
+        group: items[i].group || null,
         notifyOnce: !!notifyOnce,
+        lowestSeen: state[finalUrl]?.lowestSeen || null,
+        history: state[finalUrl]?.history || [],
       }
 
       // Select comparison source based on per-item warehouse mode
@@ -569,7 +859,20 @@ async function checkOnce() {
         newAvail = !!info.available
       }
 
-      const passesThreshold = threshold ? (newPrice > 0 && newPrice <= threshold) : true
+      // Absolute threshold check
+      const passesAbs = threshold ? (newPrice > 0 && newPrice <= threshold) : true
+      // Percent-drop threshold check
+      let passesDrop = true
+      const td = items[i].thresholdDrop
+      if (td && td > 0) {
+        let basePrice = prevPrice || newPrice
+        const baseSel = (items[i].baseline || 'last')
+        if (baseSel === 'lowest' && state[finalUrl].lowestSeen?.price) basePrice = state[finalUrl].lowestSeen.price
+        if (baseSel === 'start' && Array.isArray(state[finalUrl].history) && state[finalUrl].history.length > 0) basePrice = state[finalUrl].history[0].price || basePrice
+        const target = basePrice * (1 - td / 100)
+        passesDrop = newPrice > 0 && newPrice <= target
+      }
+      const passesThreshold = passesAbs && passesDrop
       const isBackInStock = prev && (prevAvail === false || prevAvail === 0 || prevAvail === undefined) && newAvail === true
 
       const whOnly = useWarehouse === 'only'
@@ -595,6 +898,22 @@ async function checkOnce() {
       const sourceKey = usingWh ? 'warehouse' : 'main'
       const signature = `${sourceKey}|avail:${newAvail ? 1 : 0}|price:${Math.round(newPrice * 100)}`
       const lastSig = prev?.lastNotified
+
+      // Update history and lowestSeen
+      const chosenSource = usingWh ? 'warehouse' : 'main'
+      const nowTs = Date.now()
+      const entry = { ts: nowTs, source: chosenSource, price: Number.isFinite(newPrice) ? Number(newPrice) : 0 }
+      const hist = Array.isArray(state[finalUrl].history) ? state[finalUrl].history : []
+      const lastEntry = hist.length > 0 ? hist[hist.length - 1] : null
+      if (!lastEntry || Number(lastEntry.price || 0) !== Number(entry.price || 0)) {
+        hist.push(entry)
+      }
+      while (hist.length > HISTORY_MAX) hist.shift()
+      state[finalUrl].history = hist
+      const ls = state[finalUrl].lowestSeen
+      if (newPrice > 0 && (!ls || newPrice < ls.price || (ls.source !== chosenSource))) {
+        state[finalUrl].lowestSeen = { source: chosenSource, price: Number(newPrice), ts: nowTs }
+      }
 
       if (allowStockAlerts && isBackInStock && passesThreshold) {
         let desc = `Current Price: ${info.symbol}${newPrice.toFixed(2)}`
@@ -657,6 +976,7 @@ async function checkOnce() {
 
   saveWatch(state)
   const pruneMsg = pruned > 0 ? `, pruned=${pruned}` : ''
+  lastScanAt = Date.now()
   if (softBanUntil && Date.now() < softBanUntil) {
     const mins = Math.ceil((softBanUntil - Date.now()) / 60000)
     console.log(`${COLORS.yellow}[${new Date().toLocaleTimeString()}] Scan halted due to soft-ban. Next automatic attempt in ~${mins} min${COLORS.reset}`)
@@ -670,6 +990,179 @@ async function main() {
   printBanner()
   await checkOnce()
   setInterval(checkOnce, minutesPerCheck * 60 * 1000)
+
+  if (config.server) {
+    const port = Number(config.port || 3000)
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url, `http://localhost:${port}`)
+      if (url.pathname === '/' || url.pathname === '/index.html') {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8')
+        res.end(renderDashboardHtml())
+        return
+      }
+      res.setHeader('Content-Type', 'application/json')
+      if (url.pathname === '/api/status') {
+        const now = Date.now()
+        const coolingMs = Math.max(0, softBanUntil - now)
+        const nextScanInMs = Math.max(0, (lastScanAt ? (lastScanAt + minutesPerCheck * 60 * 1000) - now : 0))
+        res.end(JSON.stringify({
+          minutesPerCheck,
+          secondsBetweenCheck,
+          lastScanAt,
+          nextScanInMs,
+          coolingMs,
+        }))
+        return
+      }
+      if (url.pathname === '/api/items' && req.method === 'GET') {
+        try {
+          const entriesResult = readUrlsFile()
+          const entries = Array.isArray(entriesResult) ? entriesResult : entriesResult.entries
+          const state = loadWatch()
+          const items = entries.map(e => {
+            const urlStr = toProductUrl(e.value)
+            const asin = extractAsin(e.value) || null
+            const st = state[urlStr] || {}
+            const currentSourceIsWh = st && st.warehouse && st.warehouse.lastPrice
+            const currentPrice = currentSourceIsWh ? st.warehouse.lastPrice : st.lastPrice
+            const currentAvail = currentSourceIsWh ? st.warehouse.available : st.available
+            const symbol = st.symbol || '$'
+            return {
+              url: urlStr,
+              asin,
+              label: e.label || null,
+              group: e.group || null,
+              alerts: (e.allowStockAlerts && e.allowPriceAlerts) ? 'both' : (e.allowStockAlerts ? 'stock' : (e.allowPriceAlerts ? 'price' : 'none')),
+              warehouse: e.useWarehouse === 'only' ? 'only' : (e.useWarehouse === true ? 'on' : (e.useWarehouse === false ? 'off' : (DEFAULT_WAREHOUSE ? 'on' : 'off'))),
+              threshold: e.threshold ?? null,
+              thresholdDrop: e.thresholdDrop ?? null,
+              baseline: e.baseline || null,
+              current: { price: currentPrice || 0, available: !!currentAvail, source: currentSourceIsWh ? 'warehouse' : 'main', symbol },
+              lowestSeen: st.lowestSeen || null,
+              history: st.history || []
+            }
+          })
+          res.end(JSON.stringify({ items }))
+        } catch (err) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Failed to read items' }))
+        }
+        return
+      }
+      if (url.pathname === '/api/history' && req.method === 'GET') {
+        const asin = url.searchParams.get('asin')
+        if (!asin) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'asin required' })) }
+        const state = loadWatch()
+        // find by URL key that contains this ASIN
+        const key = Object.keys(state).find(k => (k||'').includes(asin))
+        const item = key ? state[key] : null
+        if (!item) { res.statusCode = 404; return res.end(JSON.stringify({ error: 'not found' })) }
+        res.end(JSON.stringify({ history: item.history || [], lowestSeen: item.lowestSeen || null, symbol: item.symbol || '$' }))
+        return
+      }
+      if (url.pathname === '/api/items' && req.method === 'POST') {
+        let body = ''
+        req.on('data', c => { body += c })
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}')
+            const { urlOrAsin, label, group, warehouse, alerts, threshold, thresholdDrop, baseline } = data
+            if (!urlOrAsin || typeof urlOrAsin !== 'string') {
+              res.statusCode = 400
+              return res.end(JSON.stringify({ error: 'urlOrAsin is required' }))
+            }
+            // Normalize line
+            const tokens = []
+            if (label) tokens.push(`label="${String(label).replace(/"/g,'\"')}"`)
+            if (group) tokens.push(`group="${String(group).replace(/"/g,'\"')}"`)
+            if (warehouse && ['on','off','only'].includes(String(warehouse))) tokens.push(`warehouse=${warehouse}`)
+            if (alerts && ['stock','price','none'].includes(String(alerts))) tokens.push(`alerts=${alerts}`)
+            if (typeof threshold === 'number' && !Number.isNaN(threshold)) tokens.push(`threshold=${Number(threshold).toFixed(2)}`)
+            if (typeof thresholdDrop === 'number' && !Number.isNaN(thresholdDrop) && thresholdDrop > 0) tokens.push(`threshold_drop=${Number(thresholdDrop).toFixed(0)}%`)
+            if (baseline && ['last','lowest','start'].includes(String(baseline))) tokens.push(`baseline=${baseline}`)
+            const line = `${urlOrAsin}${tokens.length? '|' + tokens.join('|') : ''}`
+            // Append to urls.txt
+            const p = new URL('./urls.txt', import.meta.url)
+            const prev = fs.existsSync(p) ? fs.readFileSync(p).toString() : ''
+            const next = prev.endsWith('\n') || prev.length===0 ? prev + line + '\n' : prev + '\n' + line + '\n'
+            fs.writeFileSync(p, next)
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ error: 'Invalid body' }))
+          }
+        })
+        return
+      }
+      if (url.pathname === '/api/items' && req.method === 'PUT') {
+        let body = ''
+        req.on('data', c => { body += c })
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}')
+            const { asin } = data
+            if (!asin) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'asin is required' })) }
+            const p = new URL('./urls.txt', import.meta.url)
+            const prev = fs.existsSync(p) ? fs.readFileSync(p).toString() : ''
+            const lines = prev.split(/\r?\n/)
+            let updated = false
+            const nextLines = lines.map(l => {
+              const t = l.trim()
+              if (!t) return l
+              const a = extractAsin(t)
+              if (a !== asin) return l
+              // Parse existing line to keep URL/ASIN as-is, then rebuild tokens
+              const parts = t.split('|').map(s => s.trim())
+              const head = parts[0]
+              const tokens = []
+              if (data.label) tokens.push(`label="${String(data.label).replace(/"/g,'\\"')}"`)
+              if (data.group) tokens.push(`group="${String(data.group).replace(/"/g,'\\"')}"`)
+              if (data.warehouse && ['on','off','only'].includes(String(data.warehouse))) tokens.push(`warehouse=${data.warehouse}`)
+              if (data.alerts && ['stock','price','none'].includes(String(data.alerts))) tokens.push(`alerts=${data.alerts}`)
+              if (typeof data.threshold === 'number' && !Number.isNaN(data.threshold)) tokens.push(`threshold=${Number(data.threshold).toFixed(2)}`)
+              if (typeof data.thresholdDrop === 'number' && !Number.isNaN(data.thresholdDrop) && data.thresholdDrop > 0) tokens.push(`threshold_drop=${Number(data.thresholdDrop).toFixed(0)}%`)
+              if (data.baseline && ['last','lowest','start'].includes(String(data.baseline))) tokens.push(`baseline=${data.baseline}`)
+              updated = true
+              return head + (tokens.length ? '|' + tokens.join('|') : '')
+            })
+            if (!updated) { res.statusCode = 404; return res.end(JSON.stringify({ error: 'ASIN not found' })) }
+            fs.writeFileSync(p, nextLines.join('\n'))
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ error: 'Invalid body' }))
+          }
+        })
+        return
+      }
+      if (url.pathname === '/api/scan' && req.method === 'POST') {
+        setTimeout(() => { checkOnce().catch(()=>{}) }, 0)
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname === '/api/items' && req.method === 'DELETE') {
+        const asin = url.searchParams.get('asin')
+        if (!asin) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'asin required' })) }
+        try {
+          const p = new URL('./urls.txt', import.meta.url)
+          const prev = fs.existsSync(p) ? fs.readFileSync(p).toString() : ''
+          const lines = prev.split(/\r?\n/)
+          const kept = lines.filter(l => !l.trim() || extractAsin(l) !== asin)
+          fs.writeFileSync(p, kept.join('\n'))
+          res.end(JSON.stringify({ ok: true }))
+        } catch(e) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Failed to delete' }))
+        }
+        return
+      }
+      res.statusCode = 404
+      res.end(JSON.stringify({ error: 'Not found' }))
+    })
+    server.listen(port, '127.0.0.1', () => {
+      console.log(`${COLORS.cyan}Server running at http://127.0.0.1:${port}${COLORS.reset}`)
+    })
+  }
 }
 
 main().catch(err => {
