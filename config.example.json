@@ -5,7 +5,7 @@
   "url_params": {},
   "webhook_url": "",
   "warehouse": false,
-  "debug": true
+  "debug": true,
   "server": false,
   "port": 3000
 }
