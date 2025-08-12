@@ -4,10 +4,14 @@ import { load } from 'cheerio'
 const config = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url)).toString())
 // Backward compatible default for Warehouse tracking
 const DEFAULT_WAREHOUSE = !!(Object.prototype.hasOwnProperty.call(config, 'default_warehouse') ? config.default_warehouse : config.warehouse)
-const MIN_MINUTES = 10
-const MIN_DELAY_SEC = 60
-const minutesPerCheck = Math.max(Number(config.minutes_per_check || MIN_MINUTES), MIN_MINUTES)
-const secondsBetweenCheck = Math.max(Number(config.seconds_between_check || MIN_DELAY_SEC), MIN_DELAY_SEC)
+const DEFAULT_MINUTES = 10
+const DEFAULT_DELAY_SEC = 60
+const minutesPerCheck = Number.isFinite(Number(config.minutes_per_check)) && Number(config.minutes_per_check) > 0
+  ? Number(config.minutes_per_check)
+  : DEFAULT_MINUTES
+const secondsBetweenCheck = Number.isFinite(Number(config.seconds_between_check)) && Number(config.seconds_between_check) > 0
+  ? Number(config.seconds_between_check)
+  : DEFAULT_DELAY_SEC
 
 function log(msg) {
   const ts = new Date().toLocaleTimeString()
@@ -81,6 +85,8 @@ const userAgents = [
 ]
 // Keep a stable UA across runs to look less bot-like
 const STABLE_UA = userAgents[Math.floor(Math.random() * userAgents.length)]
+// Soft-ban cooldown end timestamp (ms since epoch); when > now, scans are skipped
+let softBanUntil = 0
 
 function getLocaleCookieForTld(tld) {
   switch (tld) {
@@ -131,6 +137,22 @@ function extractAsin(str) {
   return ''
 }
 
+function detectSoftBan(html) {
+  try {
+    const s = (html || '').toLowerCase()
+    if (!s) return false
+    return (
+      s.includes('automated access to amazon data') ||
+      s.includes('to discuss automated access') ||
+      s.includes('enter the characters you see below') ||
+      s.includes('type the characters you see in this image') ||
+      s.includes('/errors/validatecaptcha') ||
+      (s.includes('captcha') && s.includes('amazon')) ||
+      s.includes('robot check')
+    )
+  } catch { return false }
+}
+
 async function fetchPage(url) {
   let reqUrl = url
   if (reqUrl.includes('/dp/')) {
@@ -159,9 +181,14 @@ async function fetchPage(url) {
   }
 
   const res = await fetch(reqUrl, { headers, redirect: 'follow' })
-  if (!res.ok) return null
+  const status = res.status
+  if (!res.ok) {
+    return { $, softBan: status === 429 || status === 503 }
+  }
   const html = await res.text()
-  return load(html)
+  const softBan = detectSoftBan(html)
+  const $ = load(html)
+  return { $, softBan }
 }
 
 async function fetchAodHtml(asin) {
@@ -435,6 +462,13 @@ async function postWebhook(embed) {
 }
 
 async function checkOnce() {
+  // Respect soft-ban cooldown
+  const now = Date.now()
+  if (softBanUntil && now < softBanUntil) {
+    const mins = Math.ceil((softBanUntil - now) / 60000)
+    log(`Scan skipped: soft-ban cooldown active. Next attempt in ~${mins} min`)
+    return
+  }
   if (!config.webhook_url) {
     log('Error: No webhook_url configured. Set config.webhook_url to receive notifications.')
   }
@@ -466,22 +500,19 @@ async function checkOnce() {
   for (let i = 0; i < items.length; i++) {
     const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce } = items[i]
     try {
-      const $ = await fetchPage(finalUrl)
-      if (!$) {
+      const page = await fetchPage(finalUrl)
+      const $ = page && page.$
+      if (!page || !$) {
         errors++
         continue
       }
-      const info = await parseItem($, finalUrl, useWarehouse)
-      if (config.debug) {
-        const asin = extractAsin(finalUrl) || 'N/A'
-        const alertsMode = (allowStockAlerts && allowPriceAlerts) ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
-        const thrTxt = (typeof threshold === 'number' && !isNaN(threshold)) ? threshold.toFixed(2) : 'none'
-        const whTxt = useWarehouse === 'only' ? 'only' : (useWarehouse ? 'on' : 'off')
-        const displayTitle = (label && label.trim().length > 0) ? label.trim() : (info.title || '').trim()
-        const titleShort = displayTitle.length > 80 ? displayTitle.slice(0, 77) + '...' : (displayTitle || 'N/A')
-        console.log(`${COLORS.magenta}[${new Date().toLocaleTimeString()}] ASIN: ${asin} | ${titleShort}${COLORS.reset}`)
-        console.log(`${COLORS.dim}  warehouse=${whTxt} | alerts=${alertsMode} | threshold=${thrTxt}${COLORS.reset}`)
+      if (page.softBan) {
+        const cooldownMin = 30
+        softBanUntil = Date.now() + cooldownMin * 60 * 1000
+        log(`Warning: Possible soft ban detected. Pausing scans for ${cooldownMin} minutes to cool down.`)
+        break
       }
+      const info = await parseItem($, finalUrl, useWarehouse)
 
       const prev = state[finalUrl]
       const alertsMode = allowStockAlerts && allowPriceAlerts ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
@@ -542,17 +573,19 @@ async function checkOnce() {
       const isBackInStock = prev && (prevAvail === false || prevAvail === 0 || prevAvail === undefined) && newAvail === true
 
       const whOnly = useWarehouse === 'only'
-      // Status line so users see why there may be no notifications yet
+      // Clean, single-line status so users see why there may be no notifications yet
       if (config.debug) {
+        const asin = extractAsin(finalUrl) || 'N/A'
+        const alertsMode = (allowStockAlerts && allowPriceAlerts) ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
+        const displayTitle = (label && label.trim().length > 0) ? label.trim() : (info.title || '').trim()
+        const titleShort = displayTitle.length > 80 ? displayTitle.slice(0, 77) + '...' : (displayTitle || 'N/A')
         const src = usingWh ? 'Warehouse' : 'Main'
         const priceTxt = newPrice > 0 ? `${info.symbol}${newPrice.toFixed(2)}` : 'N/A'
-        const stockTxt = newAvail ? `${COLORS.green}IN STOCK${COLORS.reset}` : `${COLORS.red}OUT OF STOCK${COLORS.reset}`
-        let extra = ''
-        if (typeof threshold === 'number' && !isNaN(threshold)) {
-          const thrTxt = `${info.symbol}${threshold.toFixed(2)}`
-          extra = ` | threshold=${thrTxt} ${passesThreshold ? '(met)' : '(not met)'}`
-        }
-        console.log(`${COLORS.dim}  status: ${stockTxt} | source=${src} | price=${priceTxt}${extra}${COLORS.reset}`)
+        const statusTxt = newAvail ? `${COLORS.green}IN STOCK${COLORS.reset}` : `${COLORS.red}OUT${COLORS.reset}`
+        const thrPart = (typeof threshold === 'number' && !isNaN(threshold))
+          ? ` | threshold=${info.symbol}${threshold.toFixed(2)} ${passesThreshold ? '(met)' : '(not met)'}`
+          : ''
+        console.log(`${COLORS.magenta}[${new Date().toLocaleTimeString()}] [${i+1}/${items.length}] ${titleShort} (${asin}) — ${src} | ${priceTxt} | ${statusTxt}${thrPart} | alerts=${alertsMode}${COLORS.reset}`)
       }
       // If source went unavailable, clear lastNotified so a future restock notifies again
       if (notifyOnce && prev && prev.lastNotified && newAvail === false) {
@@ -606,7 +639,7 @@ async function checkOnce() {
 
     // Be polite between requests to reduce detection (skip after last item)
     if (i < items.length - 1) {
-      if (config.debug) console.log(`${COLORS.yellow}[${new Date().toLocaleTimeString()}] Waiting ${secondsBetweenCheck} seconds before next product...${COLORS.reset}`)
+      if (config.debug) console.log(`${COLORS.yellow}[${new Date().toLocaleTimeString()}] Waiting ${secondsBetweenCheck}s… (${i+1}/${items.length} done)${COLORS.reset}`)
       await new Promise(r => setTimeout(r, secondsBetweenCheck * 1000))
     }
   }
@@ -624,7 +657,12 @@ async function checkOnce() {
 
   saveWatch(state)
   const pruneMsg = pruned > 0 ? `, pruned=${pruned}` : ''
-  console.log(`${COLORS.green}[${new Date().toLocaleTimeString()}] Scan complete: notifications sent=${sent}, errors=${errors}${pruneMsg}. Next in ${minutesPerCheck} min${COLORS.reset}`)
+  if (softBanUntil && Date.now() < softBanUntil) {
+    const mins = Math.ceil((softBanUntil - Date.now()) / 60000)
+    console.log(`${COLORS.yellow}[${new Date().toLocaleTimeString()}] Scan halted due to soft-ban. Next automatic attempt in ~${mins} min${COLORS.reset}`)
+  } else {
+    console.log(`${COLORS.green}[${new Date().toLocaleTimeString()}] Scan complete: notifications sent=${sent}, errors=${errors}${pruneMsg}. Next in ${minutesPerCheck} min${COLORS.reset}`)
+  }
 }
 
 async function main() {
