@@ -1,12 +1,67 @@
 {
+  // How often to run a full scan (minutes)
   "minutes_per_check": 10,
+  // Delay between each item (seconds) to be polite
   "seconds_between_check": 60,
-  "tld": "ca",
-  "url_params": {},
-  "webhook_url": "",
-  "warehouse": false,
-  "debug": true,
-  "server": false,
-  "port": 3000
-}
 
+  // Which Amazon site to use (examples: "ca", "com", "co.uk", "de")
+  "tld": "ca",
+
+  // Extra query parameters to append to all product URLs (usually leave empty)
+  "url_params": {},
+
+  // Discord webhook that receives alerts
+  "webhook_url": "ENTER_WEBHOOK_HERE",
+
+  // Prefer Amazon Warehouse offers when available (on by default)
+  "default_warehouse": true,
+
+  // Extra logs in the terminal to help diagnose issues
+  "debug": true,
+
+  // Enable the local dashboard and choose port
+  "server": false,
+  "port": 3025,
+
+  // =============
+  // User Agent rotation (helps avoid blocks)
+  // stable-per-run: one browser identity for the whole session
+  // sticky-per-item: each item stays on a consistent identity (recommended)
+  // rotate-per-request: new identity every request
+  "user_agent_strategy": "sticky-per-item",
+  // Optional custom list. Leave empty to use built in ones
+  "user_agents": [],
+  // When a soft ban is detected, switch user agent for that item
+  "rotate_on_soft_ban": true,
+
+  // =============
+  // Proxy support (optional). Only add proxies if you need them.
+  // Examples: "http://user:pass@host:port" or "socks5://host:1080"
+  "proxies": [],
+  // none | round-robin | sticky-per-item
+  "proxy_strategy": "round-robin",
+  // Timeout per proxied request (milliseconds)
+  "proxy_timeout_ms": 12000,
+  // If a proxy fails, try the next one automatically
+  "retry_with_next_proxy": true,
+  // After a failure, pause a proxy for this long (milliseconds)
+  "proxy_cooldown_ms": 300000,
+
+  // =============
+  // History storage — simple settings for everyone
+  // Keep recent days at full detail (exact changes). Older data is summarized by day.
+  "history_enabled": true,         // Turn price history on/off for everyone
+  "history_days": 7,               // Recent days to keep in full detail
+  "history_limit": 50,             // Max saved changes per item
+  "history_noise_protection": true // Ignore one‑off price spikes unless they repeat
+
+  // Advanced history (optional). Leave commented unless you need it.
+  // "history": {
+  //   "keep_full_days": 7,
+  //   "bucket_after_days": 7,
+  //   "bucket_granularity": "1d",
+  //   "max_points": 2000,
+  //   "keep_flip_markers": true,
+  //   "outlier_confirm_scans": 2
+  // }
+}

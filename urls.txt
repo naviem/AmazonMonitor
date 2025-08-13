@@ -1,21 +1,38 @@
-# Put one product per line. Supports full product URLs or bare ASINs.
-# Comments start with # and blank lines are ignored.
-# Optional per-item flags using key=value segments after the URL (order doesn't matter):
-# - threshold=PRICE
-# - warehouse=on|off|only   (only = alert on Warehouse offers exclusively)
-# - alerts=stock|price|none   (default: both)
-# - label="Short Name"        (optional display name used in console/webhooks)
-# - notify=once               (send one alert per unique state; suppress duplicates until it changes)
-# Examples:
-#   https://www.amazon.com/dp/B0XXXXX123|threshold=299.99
-#   https://www.amazon.com/dp/B0XXXXX123|warehouse=on
-#   https://www.amazon.com/dp/B0XXXXX123|threshold=299.99|warehouse=on
-#   https://www.amazon.com/dp/B0XXXXX123|alerts=stock
+# How to use this file (easy mode)
+# - Put one product per line. You can paste the full Amazon link or just the 10‑character product code (ASIN).
+# - After the link, you can add filters using key=value. You can write them in any order.
+#
+# Filters you can use (plain English):
+# - label="Your name": Gives the item a short name so you recognize it quickly in the list and in messages.
+# - group=Word: Puts the item in a group you choose (for example Consoles, Food) so you can filter later.
+# - warehouse=on|off|only:
+#     on  = use Amazon Warehouse price when it exists, otherwise use the main price
+#     off = ignore Warehouse and always use the main price
+#     only= only pay attention to Warehouse offers
+# - alerts=stock|price|none:
+#     by default, users will receive notifications for BOTH price drop and stock.
+#     stock = only when it comes back in stock
+#     price = only when the price goes down
+#     none  = no alerts for this item
+# - threshold=NUMBER: A maximum price. Alerts only if the current price is less than or equal to this number.
+# - threshold_drop=PERCENT: A percentage discount rule. Example: 10 means “alert when the price is at least ten percent lower than the baseline price”.
+# - baseline=last|lowest|start: What “drop %” compares against: last = last seen price (default); lowest = best price we ever saw; start = price when you added the item.
+# - notify=once: Sends one alert per unique state and won’t repeat until the price or stock changes again.
+#
+# Examples you can copy:
+#   https://www.amazon.com/dp/B0XXXXX123
+#   https://www.amazon.com/dp/B0XXXXX123|label="Switch 2"|group=Consoles
+#   https://www.amazon.com/dp/B0XXXXX123|threshold=349.99
+#   https://www.amazon.com/dp/B0XXXXX123|threshold_drop=10%|baseline=last
+#   https://www.amazon.com/dp/B0XXXXX123|warehouse=only|alerts=stock
+#   B0XXXXX123|label="VR2 Bundle"|notify=once
 
-# Examples:
+# More examples:
 # https://www.amazon.com/dp/B0XXXXX123
 # B0XXXXX123
 # https://www.amazon.com/dp/B0XXXXX123|threshold=299.99|warehouse=on
 # https://www.amazon.com/dp/B0XXXXX123|warehouse=off
 # https://www.amazon.com/dp/B0XXXXX123|warehouse=only|alerts=stock
 # https://www.amazon.com/dp/B0XXXXX123|label="VR2 Bundle"|notify=once
+
+B0C2XNQNN9|label="Razer Nommo"|warehouse=on|alerts=price

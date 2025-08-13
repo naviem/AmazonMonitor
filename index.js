@@ -2,7 +2,72 @@ import fs from 'fs'
 import http from 'http'
 import { load } from 'cheerio'
 
-const config = JSON.parse(fs.readFileSync(new URL('./config.json', import.meta.url)).toString())
+function parseJsonWithComments(text){
+  let out = ''
+  let inStr = false
+  let quote = '"'
+  let escape = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    const next = text[i+1]
+    if (inStr) {
+      out += ch
+      if (escape) { escape = false; continue }
+      if (ch === '\\') { escape = true; continue }
+      if (ch === quote) { inStr = false }
+      continue
+    }
+    if (ch === '"' || ch === "'") { inStr = true; quote = ch; out += ch; continue }
+    if (ch === '/' && next === '/') { while (i < text.length && text[i] !== '\n') i++; out += '\n'; continue }
+    if (ch === '/' && next === '*') { i += 2; while (i < text.length && !(text[i] === '*' && text[i+1] === '/')) i++; i++; continue }
+    out += ch
+  }
+  // remove trailing commas before } or ]
+  out = out.replace(/,\s*([}\]])/g, '$1')
+  return JSON.parse(out)
+}
+
+function readConfig(url){
+  const raw = fs.readFileSync(url).toString()
+  try { return parseJsonWithComments(raw) } catch { return JSON.parse(raw) }
+}
+
+const config = readConfig(new URL('./config.json', import.meta.url))
+
+/*
+  CONFIG REFERENCE (copy into your config.json as needed; values here are defaults if missing)
+
+  - minutes_per_check: How often to scan everything (minutes)
+  - seconds_between_check: Delay between each item (seconds)
+  - tld: Amazon domain suffix, like "ca", "com", "co.uk"
+  - webhook_url: Discord webhook URL where alerts are sent
+  - default_warehouse: true = prefer Amazon Warehouse when available; false = main offer only
+  - server: true to enable local web dashboard; port: dashboard port number
+
+  User‑Agent rotation (helps avoid blocks):
+  - user_agent_strategy: "stable-per-run" | "sticky-per-item" | "rotate-per-request"
+      stable-per-run: one UA for the entire session (simple)
+      sticky-per-item: each item keeps the same UA (recommended)
+      rotate-per-request: new UA every request (most diverse)
+  - user_agents: optional custom list of UA strings to rotate
+  - rotate_on_soft_ban: when a soft-ban is detected, switch UA for that item
+
+  Proxy support (optional; use only if you need it):
+  - proxies: list of proxy URLs, e.g. ["http://user:pass@host:port", "socks5://host:1080"]
+  - proxy_strategy: "none" | "round-robin" | "sticky-per-item"
+  - proxy_timeout_ms: request timeout when using a proxy
+  - retry_with_next_proxy: on failure, try the next proxy in the list
+  - proxy_cooldown_ms: temporarily disable a failing proxy for this many ms
+
+  History storage:
+  - history.keep_full_days: keep full-resolution entries for this many days
+  - history.bucket_after_days: start compressing older-than this many days
+  - history.bucket_granularity: currently "1d" (by day)
+  - history.max_points: cap points per item; oldest points are thinned first
+  - history.keep_flip_markers: always keep stock flip events
+  - history.outlier_confirm_scans: require N consecutive scans to accept a sudden change
+*/
+
 // Backward compatible default for Warehouse tracking
 const DEFAULT_WAREHOUSE = !!(Object.prototype.hasOwnProperty.call(config, 'default_warehouse') ? config.default_warehouse : config.warehouse)
 const DEFAULT_MINUTES = 10
@@ -13,6 +78,11 @@ const minutesPerCheck = Number.isFinite(Number(config.minutes_per_check)) && Num
 const secondsBetweenCheck = Number.isFinite(Number(config.seconds_between_check)) && Number(config.seconds_between_check) > 0
   ? Number(config.seconds_between_check)
   : DEFAULT_DELAY_SEC
+
+// User‑agent rotation defaults
+const UA_STRATEGY = (config.user_agent_strategy || 'sticky-per-item')
+const ROTATE_ON_SOFTBAN = config.rotate_on_soft_ban !== false
+const CUSTOM_UA = Array.isArray(config.user_agents) && config.user_agents.length > 0 ? config.user_agents : null
 
 function log(msg) {
   const ts = new Date().toLocaleTimeString()
@@ -79,17 +149,107 @@ if (typeof fetch === 'undefined') {
   process.exit(1)
 }
 
-const userAgents = [
+const userAgents = CUSTOM_UA || [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
 ]
 // Keep a stable UA across runs to look less bot-like
 const STABLE_UA = userAgents[Math.floor(Math.random() * userAgents.length)]
+const uaPerItem = new Map() // sticky-per-item map
+
+// Proxy rotation defaults
+const PROXIES = Array.isArray(config.proxies) ? config.proxies : []
+const PROXY_STRATEGY = (config.proxy_strategy || (PROXIES.length>0 ? 'round-robin' : 'none'))
+const PROXY_TIMEOUT_MS = Number.isFinite(Number(config.proxy_timeout_ms)) ? Number(config.proxy_timeout_ms) : 12000
+const RETRY_WITH_NEXT_PROXY = config.retry_with_next_proxy !== false
+const PROXY_COOLDOWN_MS = Number.isFinite(Number(config.proxy_cooldown_ms)) ? Number(config.proxy_cooldown_ms) : 5*60*1000
+let proxyIndex = 0
+const proxyCooldownUntil = new Map() // url -> timestamp
+const proxyAgentCache = new Map() // url -> dispatcher/agent
+
+// History defaults with simple keys for non‑technical users
+const HISTORY_ENABLED = (config?.history_enabled === undefined) ? true : !!config.history_enabled
+// Simple keys (preferred):
+//   history_days                -> number of recent days to keep at full detail (default 7)
+//   history_limit               -> max number of saved changes per item (default 2000)
+//   history_noise_protection    -> true/false (ignore one‑off spikes; default true)
+// Advanced keys (optional, under history.*) still supported for power users.
+const simpleDays = Number(config?.history_days ?? config?.history?.keep_full_days ?? 7)
+const simpleLimit = Number(config?.history_limit ?? config?.history?.max_points ?? 2000)
+const simpleNoise = (config?.history_noise_protection === undefined)
+  ? (config?.history?.outlier_confirm_scans !== undefined ? (Number(config.history.outlier_confirm_scans) > 1) : true)
+  : !!config?.history_noise_protection
+
+const historyCfg = {
+  keep_full_days: simpleDays,
+  bucket_after_days: Number(config?.history?.bucket_after_days ?? simpleDays),
+  bucket_granularity: String(config?.history?.bucket_granularity ?? '1d'),
+  max_points: simpleLimit,
+  keep_flip_markers: !!(config?.history?.keep_flip_markers ?? true),
+  outlier_confirm_scans: simpleNoise ? Math.max(2, Number(config?.history?.outlier_confirm_scans ?? 2)) : 1,
+}
 // Soft-ban cooldown end timestamp (ms since epoch); when > now, scans are skipped
 let softBanUntil = 0
 let lastScanAt = 0
 const HISTORY_MAX = 20
+
+function randomFrom(arr){ return arr[Math.floor(Math.random()*arr.length)] }
+
+function pickUserAgentForKey(itemKey){
+  if (UA_STRATEGY === 'stable-per-run') return STABLE_UA
+  if (UA_STRATEGY === 'rotate-per-request') return randomFrom(userAgents)
+  // sticky-per-item (default)
+  if (!uaPerItem.has(itemKey)) uaPerItem.set(itemKey, randomFrom(userAgents))
+  return uaPerItem.get(itemKey)
+}
+
+function rotateUserAgentForKey(itemKey){
+  if (UA_STRATEGY !== 'sticky-per-item' && UA_STRATEGY !== 'rotate-per-request') return
+  uaPerItem.set(itemKey, randomFrom(userAgents))
+}
+
+async function getProxyDispatcher(proxyUrl){
+  if (!proxyUrl) return undefined
+  if (proxyAgentCache.has(proxyUrl)) return proxyAgentCache.get(proxyUrl)
+  try {
+    const undici = await import('undici')
+    const ProxyAgent = undici?.ProxyAgent
+    if (!ProxyAgent) return undefined
+    const dispatcher = new ProxyAgent(proxyUrl)
+    proxyAgentCache.set(proxyUrl, dispatcher)
+    return dispatcher
+  } catch {
+    return undefined
+  }
+}
+
+function selectProxyUrlForKey(itemKey){
+  if (PROXY_STRATEGY === 'none' || PROXIES.length === 0) return null
+  const now = Date.now()
+  // filter out proxies in cooldown
+  const usable = PROXIES.filter(u => (proxyCooldownUntil.get(u) || 0) <= now)
+  if (usable.length === 0) return null
+  if (PROXY_STRATEGY === 'sticky-per-item') {
+    if (!proxyAgentCache.has('sticky:'+itemKey)) {
+      // store the chosen url inside cache under a sticky key
+      const chosen = usable[(Math.abs(hashString(itemKey)) % usable.length)]
+      proxyAgentCache.set('sticky:'+itemKey, chosen)
+    }
+    return proxyAgentCache.get('sticky:'+itemKey)
+  }
+  // round-robin
+  const url = usable[proxyIndex % usable.length]
+  proxyIndex++
+  return url
+}
+
+function recordProxyFailure(proxyUrl){
+  if (!proxyUrl) return
+  proxyCooldownUntil.set(proxyUrl, Date.now() + PROXY_COOLDOWN_MS)
+}
+
+function hashString(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0 } return h }
 
 function renderDashboardHtml() {
   return `<!doctype html>
@@ -104,21 +264,31 @@ function renderDashboardHtml() {
     .container{max-width:1180px;margin:18px auto;padding:0 18px}
     .meta{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;color:var(--muted)}
     .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+    /* Table → clean list */
     table{width:100%;border-collapse:separate;border-spacing:0 8px}
     thead th{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:10px 12px}
-    tbody td{background:#0f1624;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px}
+    tbody td{background:#0f1624;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px;vertical-align:middle}
     tbody tr td:first-child{border-left:1px solid var(--line);border-top-left-radius:10px;border-bottom-left-radius:10px}
     tbody tr td:last-child{border-right:1px solid var(--line);border-top-right-radius:10px;border-bottom-right-radius:10px}
     a{color:var(--link);text-decoration:none}
-    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .header{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:14px}
     .title{font-size:20px;font-weight:700}
-    .toolbar{display:flex;gap:10px;flex-wrap:wrap}
+    .toolbar{display:flex;gap:10px;flex:1;justify-content:flex-end;flex-wrap:wrap}
+    .toolbar input{min-width:300px}
     .btn{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:#121b2b;color:var(--fg);cursor:pointer}
     .btn.primary{background:#1a2f5a;border-color:#25447e}
     input,select{padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0b1220;color:var(--fg)}
     .muted{color:var(--muted)}
     .tag{background:var(--chip);border:1px solid var(--line);color:var(--muted);padding:2px 8px;border-radius:999px;font-size:12px}
     .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
+    /* Item column */
+    .itemCell{line-height:1.3}
+    .itemMain{display:flex;align-items:center;gap:8px}
+    .label{font-weight:600}
+    .sub{font-size:12px;color:var(--muted)}
+    .rules{display:flex;gap:8px;flex-wrap:wrap}
+    .actions{display:flex;gap:8px;justify-content:flex-end}
+    details.inline{margin-top:8px}
   </style>
   </head>
   <body>
@@ -139,47 +309,46 @@ function renderDashboardHtml() {
         <table>
           <thead>
             <tr>
-              <th>Group</th>
-              <th>Label</th>
-              <th>URL</th>
-              <th>Source</th>
+              <th>Item</th>
               <th>Status</th>
               <th>Price</th>
-              <th>Threshold</th>
-              <th>Warehouse</th>
-              <th>Alerts</th>
+              <th>Rules</th>
               <th>Actions</th>
             </tr>
           </thead>
-          <tbody id="items"><tr><td class="muted" colspan="10">Loading items…</td></tr></tbody>
+          <tbody id="items"><tr><td class="muted" colspan="5">Loading items…</td></tr></tbody>
         </table>
       </div>
       <div class="card">
         <h2 style="margin:0 0 8px;font-size:16px;color:#a0b3c6">Add item</h2>
-        <form id="addForm" onsubmit="return false" class="meta">
-          <input id="f_url" placeholder="URL or ASIN" style="flex:2;min-width:260px" title="Paste a product link or 10‑char ASIN"/>
+        <form id="addForm" onsubmit="return false" class="meta" style="align-items:center">
+          <input id="f_url" placeholder="URL or ASIN" style="flex:2;min-width:300px" title="Paste a product link or 10‑char ASIN"/>
           <input id="f_label" placeholder="Label (optional)" style="flex:1;min-width:160px" title="Short name for this item"/>
-          <select id="f_wh" title="Warehouse: on = prefer Warehouse; off = ignore; only = alert only on Warehouse">
-            <option value="">warehouse: default</option>
-            <option value="on">warehouse: on</option>
-            <option value="off">warehouse: off</option>
-            <option value="only">warehouse: only</option>
-          </select>
-          <select id="f_alerts" title="Alerts: stock = back‑in‑stock only; price = price‑drop only; none = mute">
-            <option value="">alerts: both (default)</option>
-            <option value="stock">alerts: stock</option>
-            <option value="price">alerts: price</option>
-            <option value="none">alerts: none</option>
-          </select>
-          <input id="f_threshold" type="number" step="0.01" placeholder="threshold $ (optional)" style="width:150px" title="Only alert when the current price is less than or equal to this value"/>
-          <input id="f_drop" type="number" step="1" min="1" max="90" placeholder="drop % (optional)" style="width:130px" title="Percent drop vs baseline"/>
-          <select id="f_base" title="Baseline for drop% rule">
-            <option value="">baseline: last</option>
-            <option value="last">last</option>
-            <option value="lowest">lowest</option>
-            <option value="start">start</option>
-          </select>
           <button id="btn_add" class="btn primary">Add</button>
+          <details class="inline"><summary class="muted">More options</summary>
+            <div class="meta" style="margin-top:8px">
+              <select id="f_wh" title="Warehouse: on = prefer Warehouse; off = ignore; only = alert only on Warehouse">
+                <option value="">warehouse: default</option>
+                <option value="on">warehouse: on</option>
+                <option value="off">warehouse: off</option>
+                <option value="only">warehouse: only</option>
+              </select>
+              <select id="f_alerts" title="Alerts: stock = back‑in‑stock only; price = price‑drop only; none = mute">
+                <option value="">alerts: both (default)</option>
+                <option value="stock">alerts: stock</option>
+                <option value="price">alerts: price</option>
+                <option value="none">alerts: none</option>
+              </select>
+              <input id="f_threshold" type="number" step="0.01" placeholder="threshold $ (optional)" style="width:150px" title="Only alert when the current price is less than or equal to this value"/>
+              <input id="f_drop" type="number" step="1" min="1" max="90" placeholder="drop % (optional)" style="width:130px" title="Percent drop vs baseline"/>
+              <select id="f_base" title="Baseline for drop% rule">
+                <option value="">baseline: last</option>
+                <option value="last">last</option>
+                <option value="lowest">lowest</option>
+                <option value="start">start</option>
+              </select>
+            </div>
+          </details>
         </form>
         <details class="meta"><summary class="muted">What do these options mean?</summary>
           <div class="muted">• <b>URL or ASIN</b>: Paste a full Amazon product link, or the 10‑character product code (ASIN). Example ASIN: B0XXXXXX00.</div>
@@ -223,24 +392,20 @@ function renderDashboardHtml() {
             <div><span class=\"muted\">Schedule:</span> every \${s.minutesPerCheck} min, \${s.secondsBetweenCheck}s between items</div>
           \`
         const tbody = document.getElementById('items')
-          if (!items.length) { tbody.innerHTML = '<tr><td class="muted" colspan="10">No items found</td></tr>'; return }
+          if (!items.length) { tbody.innerHTML = '<tr><td class="muted" colspan="5">No items found</td></tr>'; return }
           tbody.innerHTML = items.map(it=>{
-            const short = it.url.length>60 ? it.url.slice(0,57)+'…' : it.url
-            const thr = (it.threshold!=null && !Number.isNaN(Number(it.threshold))) ? ('$'+Number(it.threshold).toFixed(2)) : '<span class="muted">—</span>'
+            const short = it.url.length>70 ? it.url.slice(0,67)+'…' : it.url
+            const thr = (it.threshold!=null && !Number.isNaN(Number(it.threshold))) ? ('$'+Number(it.threshold).toFixed(2)) : '—'
             const src = it.current && it.current.source ? it.current.source : 'main'
             const price = it.current && it.current.price ? (it.current.symbol||'$')+Number(it.current.price).toFixed(2) : '—'
-            const status = it.current && it.current.available ? '<span class="ok">IN STOCK</span>' : '<span class="muted">OUT</span>'
+            const status = it.current && it.current.available ? '<span class="badge" style="background:rgba(51,209,122,.15);border:1px solid #1b3a2a;color:#7de3a7">IN STOCK</span>' : '<span class="badge" style="background:rgba(248,81,73,.15);border:1px solid #3a1b1b;color:#f09b97">OUT</span>'
+            const rules = [thr!=='—'?('≤ '+thr):null, it.warehouse?('wh: '+it.warehouse):null, it.alerts?('alerts: '+it.alerts):null].filter(Boolean).map(t=>'<span class="tag">'+t+'</span>').join(' ')
             return \`<tr>
-              <td>\${it.group ? '<span class=\\\"tag\\\">'+it.group+'</span>' : '<span class=\\\"muted\\\">—</span>'}</td>
-              <td>\${it.label?it.label:'<span class=\\\"muted\\\">(none)</span>'}</td>
-              <td><a href=\"\${it.url}\" target=\"_blank\" rel=\"noreferrer\">\${short}</a></td>
-              <td><span class=\"tag\">\${src}</span></td>
+              <td class=\"itemCell\">\n                <div class=\"itemMain\">\n                  \${it.group ? '<span class=\\\"tag\\\">'+it.group+'</span>' : ''}\n                  <span class=\"label\">\${it.label?it.label:'(no label)'}</span>\n                </div>\n                <div class=\"sub\"><a href=\"\${it.url}\" target=\"_blank\" rel=\"noreferrer\">\${short}</a> · <span class=\"tag\">\${src}</span></div>\n              </td>
               <td>\${status}</td>
               <td>\${price}</td>
-              <td>\${thr}</td>
-              <td><span class=\"tag\">\${it.warehouse}</span></td>
-              <td><span class=\"tag\">\${it.alerts}</span></td>
-            <td><button data-asin=\"\${it.asin}\" class=\"hist btn\">History</button> <button data-asin=\"\${it.asin}\" class=\"edit btn\">Edit</button> <button data-asin=\"\${it.asin}\" class=\"del btn\">Delete</button></td>
+              <td>\${rules||'<span class=\\\"muted\\\">—</span>'}</td>
+              <td class=\"actions\"><button data-asin=\"\${it.asin}\" class=\"hist btn\">History</button> <button data-asin=\"\${it.asin}\" class=\"test btn\">Test</button> <button data-asin=\"\${it.asin}\" class=\"edit btn\">Edit</button> <button data-asin=\"\${it.asin}\" class=\"del btn\">Delete</button></td>
             </tr>\`
           }).join('')
         // history viewer
@@ -259,7 +424,11 @@ function renderDashboardHtml() {
             const prices=(data.history||[]).map(e=>Number(e.price||0)).filter(n=>n>0)
             const ls=data.lowestSeen? ((data.symbol||'$')+Number(data.lowestSeen.price||0).toFixed(2)+' ('+data.lowestSeen.source+')') : '—'
             const tr=document.createElement('tr'); tr.className='viewer'
-            tr.innerHTML='<td colspan="10"><div class="meta"><div>'+spark(prices)+'</div><div class="muted">Lowest ever: '+ls+'</div></div></td>'
+            if(data && data.disabled){
+              tr.innerHTML='<td colspan="5"><div class="meta"><div class="muted">History is turned off in settings. You can still see "Lowest ever" below.</div><div class="muted">Lowest ever: '+ls+'</div></div></td>'
+            } else {
+              tr.innerHTML='<td colspan="5"><div class="meta"><div>'+spark(prices)+'</div><div class="muted">Lowest ever: '+ls+'</div></div></td>'
+            }
             row.after(tr)
           }
         })
@@ -274,6 +443,14 @@ function renderDashboardHtml() {
               load()
             }
           })
+        // test webhook per item
+        document.querySelectorAll('button.test').forEach(btn=>{
+          btn.onclick = async ()=>{
+            const asin = btn.getAttribute('data-asin'); if(!asin) return
+            const r = await api('POST','/api/test?asin='+encodeURIComponent(asin))
+            alert(r && r.ok ? 'Test alert sent. Check Discord.' : 'Test alert request sent.')
+          }
+        })
           // wire edit
           document.querySelectorAll('button.edit').forEach(btn=>{
             btn.onclick = ()=>{
@@ -283,7 +460,7 @@ function renderDashboardHtml() {
               const old = document.querySelector('tr.editor'); if(old) old.remove()
               const tr = document.createElement('tr'); tr.className='editor'
               const thrVal = (it.threshold!=null && !isNaN(Number(it.threshold))) ? Number(it.threshold).toFixed(2) : ''
-              tr.innerHTML = '<td colspan="10">'
+              tr.innerHTML = '<td colspan="5">'
                 + '<div class="meta">'
                 + '<input id="e_label" value="'+(it.label||'')+'" placeholder="Label"/>'
                 + '<input id="e_group" value="'+(it.group||'')+'" placeholder="Group"/>'
@@ -428,7 +605,8 @@ async function fetchPage(url) {
     reqUrl += (reqUrl.includes('?') ? '&' : '?') + 'aod=1&psc=1'
   }
 
-  const ua = STABLE_UA
+  const itemKey = url
+  const ua = pickUserAgentForKey(itemKey)
   const headers = {
     'User-Agent': ua,
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -449,7 +627,22 @@ async function fetchPage(url) {
     'Cookie': getLocaleCookieForTld(config.tld),
   }
 
-  const res = await fetch(reqUrl, { headers, redirect: 'follow' })
+  // Optional proxy selection
+  let dispatcher
+  let proxyUrl = selectProxyUrlForKey(itemKey)
+  if (proxyUrl) dispatcher = await getProxyDispatcher(proxyUrl)
+  let res
+  try {
+    res = await fetch(reqUrl, { headers, redirect: 'follow', dispatcher, signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) })
+  } catch (e) {
+    if (proxyUrl && RETRY_WITH_NEXT_PROXY) {
+      recordProxyFailure(proxyUrl)
+      proxyUrl = selectProxyUrlForKey(itemKey)
+      dispatcher = await getProxyDispatcher(proxyUrl)
+      try { res = await fetch(reqUrl, { headers, redirect: 'follow', dispatcher, signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) }) } catch {}
+    }
+  }
+  if (!res) return { $, softBan: true }
   const status = res.status
   if (!res.ok) {
     return { $, softBan: status === 429 || status === 503 }
@@ -466,7 +659,7 @@ async function fetchAodHtml(asin) {
     `https://www.amazon.${config.tld}/gp/product/ajax?asin=${asin}&m=&qid=&smid=&sourcecustomerorglistid=&sourcecustomerorglistitemid=&sr=&pc=dp&experienceId=aodAjaxMain`
   ]
   const headers = {
-    'User-Agent': STABLE_UA,
+    'User-Agent': pickUserAgentForKey(asin),
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
     'Accept-Encoding': 'gzip, deflate, br, zstd',
@@ -482,7 +675,10 @@ async function fetchAodHtml(asin) {
   for (const url of urls) {
     try {
       if (config.trace) dbg(`Fetching AOD endpoint: ${url}`)
-      const res = await fetch(url, { headers, redirect: 'follow' })
+      let dispatcher
+      const proxyUrl = selectProxyUrlForKey(asin)
+      if (proxyUrl) dispatcher = await getProxyDispatcher(proxyUrl)
+      const res = await fetch(url, { headers, redirect: 'follow', dispatcher, signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) })
       if (!res.ok) continue
       const html = await res.text()
       const $ = load(html)
@@ -902,14 +1098,52 @@ async function checkOnce() {
       // Update history and lowestSeen
       const chosenSource = usingWh ? 'warehouse' : 'main'
       const nowTs = Date.now()
-      const entry = { ts: nowTs, source: chosenSource, price: Number.isFinite(newPrice) ? Number(newPrice) : 0 }
-      const hist = Array.isArray(state[finalUrl].history) ? state[finalUrl].history : []
-      const lastEntry = hist.length > 0 ? hist[hist.length - 1] : null
-      if (!lastEntry || Number(lastEntry.price || 0) !== Number(entry.price || 0)) {
-        hist.push(entry)
+      if (HISTORY_ENABLED) {
+        const entry = { ts: nowTs, source: chosenSource, price: Number.isFinite(newPrice) ? Number(newPrice) : 0 }
+        const hist = Array.isArray(state[finalUrl].history) ? state[finalUrl].history : []
+        const lastEntry = hist.length > 0 ? hist[hist.length - 1] : null
+        // Only record when something meaningful changed (price or source flip)
+        const changed = !lastEntry || Number(lastEntry.price||0) !== Number(entry.price||0) || String(lastEntry.source||'') !== String(entry.source||'')
+        // Outlier guard: require N consecutive scans for sudden changes
+        let accept = changed
+        if (changed && historyCfg.outlier_confirm_scans > 1 && lastEntry && Math.abs(Number(lastEntry.price||0) - Number(entry.price||0)) / Math.max(1, Number(lastEntry.price||1)) > 0.25) {
+          const n = historyCfg.outlier_confirm_scans
+          const lastN = hist.slice(-n+1).map(x=>Number(x.price||0))
+          const consistent = lastN.every(p => Math.abs(p - Number(entry.price||0)) / Math.max(1,p) < 0.05)
+          accept = consistent
+        }
+        if (accept) hist.push(entry)
+        // Compression: keep full recent window, thin older to daily buckets when too large
+        const maxPoints = Number.isFinite(historyCfg.max_points) ? historyCfg.max_points : 2000
+        if (hist.length > maxPoints) {
+          const keepMs = (historyCfg.keep_full_days||7) * 86400000
+          const cutTs = Date.now() - keepMs
+          const recent = hist.filter(h => h.ts >= cutTs)
+          const older = hist.filter(h => h.ts < cutTs)
+          const byDay = new Map()
+          for (const h of older) {
+            const day = new Date(new Date(h.ts).toISOString().slice(0,10)).getTime()
+            const arr = byDay.get(day) || []
+            arr.push(h); byDay.set(day, arr)
+          }
+          const compressed = []
+          for (const [day, arr] of byDay.entries()) {
+            arr.sort((a,b)=>a.ts-b.ts)
+            const first = arr[0]
+            const last = arr[arr.length-1]
+            const min = arr.reduce((m,x)=> x.price < m.price ? x : m, arr[0])
+            const max = arr.reduce((m,x)=> x.price > m.price ? x : m, arr[0])
+            compressed.push(first, min, max, last)
+          }
+          compressed.sort((a,b)=>a.ts-b.ts)
+          state[finalUrl].history = [...compressed, ...recent].slice(-maxPoints)
+        } else {
+          state[finalUrl].history = hist
+        }
+      } else {
+        // When disabled, drop history to keep files small
+        state[finalUrl].history = []
       }
-      while (hist.length > HISTORY_MAX) hist.shift()
-      state[finalUrl].history = hist
       const ls = state[finalUrl].lowestSeen
       if (newPrice > 0 && (!ls || newPrice < ls.price || (ls.source !== chosenSource))) {
         state[finalUrl].lowestSeen = { source: chosenSource, price: Number(newPrice), ts: nowTs }
@@ -1014,6 +1248,105 @@ async function main() {
         }))
         return
       }
+      if (url.pathname === '/api/test' && req.method === 'POST') {
+        // send a simple global test message
+        postWebhook({ title: 'AmazonMonitor Test', description: 'This is a test alert from the server UI.' }).then(()=>{
+          res.end(JSON.stringify({ ok: true }))
+        }).catch(()=>{
+          res.end(JSON.stringify({ ok: false }))
+        })
+        return
+      }
+      if (url.pathname === '/api/test' && req.method === 'POST' && url.searchParams.get('asin')) {
+        // fallback; handled by query in next handler
+      }
+      if (url.pathname === '/api/test' && req.method === 'POST') {
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname === '/api/test' && req.method === 'GET') {
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname === '/api/test' && req.method === 'POST') {
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname === '/api/test' && req.method === 'POST') {
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname === '/api/test' && req.method === 'POST') {
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname === '/api/test' && req.method === 'POST') {
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname === '/api/test' && req.method === 'POST') {
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname === '/api/test' && req.method === 'POST') {
+        res.end(JSON.stringify({ ok: true }))
+        return
+      }
+      if (url.pathname.startsWith('/api/test') && req.method === 'POST') {
+        const asin = url.searchParams.get('asin')
+        const msg = asin ? `Test alert for ASIN ${asin}` : 'Test alert'
+        postWebhook({ title: 'AmazonMonitor Test', description: msg }).then(()=>{
+          res.end(JSON.stringify({ ok: true }))
+        }).catch(()=>{
+          res.end(JSON.stringify({ ok: false }))
+        })
+        return
+      }
+      if (url.pathname === '/api/bulk' && req.method === 'PUT') {
+        let body = ''
+        req.on('data', c => { body += c })
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}')
+            const { asins = [] } = data
+            if (!Array.isArray(asins) || asins.length === 0) { res.statusCode = 400; return res.end(JSON.stringify({ error: 'no items selected' })) }
+            const p = new URL('./urls.txt', import.meta.url)
+            const prev = fs.existsSync(p) ? fs.readFileSync(p).toString() : ''
+            lastUrlsSnapshot = prev
+            const lines = prev.split(/\r?\n/)
+            const nextLines = lines.map(line => {
+              const t = line.trim()
+              if (!t) return line
+              const asin = extractAsin(t)
+              if (!asins.includes(asin)) return line
+              const parts = t.split('|').map(s => s.trim())
+              const head = parts[0]
+              const tokens = []
+              if (data.warehouse) tokens.push(`warehouse=${data.warehouse}`)
+              if (data.alerts) tokens.push(`alerts=${data.alerts}`)
+              if (typeof data.threshold === 'number' && !Number.isNaN(data.threshold)) tokens.push(`threshold=${Number(data.threshold).toFixed(2)}`)
+              return head + (tokens.length ? '|' + tokens.join('|') : '')
+            })
+            fs.writeFileSync(p, nextLines.join('\n'))
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ error: 'Invalid body' }))
+          }
+        })
+        return
+      }
+      if (url.pathname === '/api/undo' && req.method === 'POST') {
+        if (lastUrlsSnapshot != null) {
+          const p = new URL('./urls.txt', import.meta.url)
+          fs.writeFileSync(p, lastUrlsSnapshot)
+          lastUrlsSnapshot = null
+          res.end(JSON.stringify({ ok: true }))
+        } else {
+          res.end(JSON.stringify({ ok: false }))
+        }
+        return
+      }
       if (url.pathname === '/api/items' && req.method === 'GET') {
         try {
           const entriesResult = readUrlsFile()
@@ -1057,6 +1390,9 @@ async function main() {
         const key = Object.keys(state).find(k => (k||'').includes(asin))
         const item = key ? state[key] : null
         if (!item) { res.statusCode = 404; return res.end(JSON.stringify({ error: 'not found' })) }
+        if (!HISTORY_ENABLED) {
+          return res.end(JSON.stringify({ history: [], lowestSeen: item.lowestSeen || null, symbol: item.symbol || '$', disabled: true }))
+        }
         res.end(JSON.stringify({ history: item.history || [], lowestSeen: item.lowestSeen || null, symbol: item.symbol || '$' }))
         return
       }
