@@ -1,59 +1,38 @@
 {
-  // How often to run a full scan (minutes)
-  "minutes_per_check": 10,
-  // Delay between each item (seconds) to be polite
-  "seconds_between_check": 60,
+  
+  "minutes_per_check": 10,     // How often to run a full scan (minutes)
+  "seconds_between_check": 60, // Delay between each item (seconds) to be polite
+  "tld": "ca",                 // Which Amazon site to use (examples: "ca", "com", "co.uk", "de")
+  "url_params": {},            // Extra query parameters to append to all product URLs (usually leave empty)
+  "webhook_url": "ENTER_WEBHOOK_HERE", 
+  "default_warehouse": true,   // Prefer Amazon Warehouse offers when available (on by default)
+  "debug": true,               // Extra logs in the terminal to help diagnose issues
+  "server": false,             // Enable the local dashboard (cleaner than using the txt file for changes, not required though)
+  "port": 3025,                // Port you want to use for the dashboard (ex. localhost:3025)
 
-  // Which Amazon site to use (examples: "ca", "com", "co.uk", "de")
-  "tld": "ca",
+  // ============= User Agent rotation (helps avoid blocks) =======================================
 
-  // Extra query parameters to append to all product URLs (usually leave empty)
-  "url_params": {},
-
-  // Discord webhook that receives alerts
-  "webhook_url": "ENTER_WEBHOOK_HERE",
-
-  // Prefer Amazon Warehouse offers when available (on by default)
-  "default_warehouse": true,
-
-  // Extra logs in the terminal to help diagnose issues
-  "debug": true,
-
-  // Enable the local dashboard and choose port
-  "server": false,
-  "port": 3025,
-
-  // =============
-  // User Agent rotation (helps avoid blocks)
   // stable-per-run: one browser identity for the whole session
   // sticky-per-item: each item stays on a consistent identity (recommended)
   // rotate-per-request: new identity every request
   "user_agent_strategy": "sticky-per-item",
-  // Optional custom list. Leave empty to use built in ones
-  "user_agents": [],
-  // When a soft ban is detected, switch user agent for that item
-  "rotate_on_soft_ban": true,
+  "user_agents": [],           // Optional custom list. Leave empty to use built in ones
+  "rotate_on_soft_ban": true,  // When a soft ban is detected, switch user agent for that item
 
-  // =============
-  // Proxy support (optional). Only add proxies if you need them.
-  // Examples: "http://user:pass@host:port" or "socks5://host:1080"
-  "proxies": [],
-  // none | round-robin | sticky-per-item
-  "proxy_strategy": "round-robin",
-  // Timeout per proxied request (milliseconds)
-  "proxy_timeout_ms": 12000,
-  // If a proxy fails, try the next one automatically
-  "retry_with_next_proxy": true,
-  // After a failure, pause a proxy for this long (milliseconds)
-  "proxy_cooldown_ms": 300000,
+  // ============= Proxy support (optional). Only add proxies if you need them ====================
 
-  // =============
-  // History storage — simple settings for everyone
-  // Keep recent days at full detail (exact changes). Older data is summarized by day.
+  "proxies": [],                  // Examples: "http://user:pass@host:port" or "socks5://host:1080"
+  "proxy_strategy": "none",       // none | round-robin | sticky-per-item
+  "proxy_timeout_ms": 12000,      // Timeout per proxied request (milliseconds)
+  "retry_with_next_proxy": true,  // If a proxy fails, try the next one automatically
+  "proxy_cooldown_ms": 300000,    // After a failure, pause a proxy for this long (milliseconds)
+
+  // ============= History storage — simple settings for everyone ==================================
+ 
   "history_enabled": true,         // Turn price history on/off for everyone
   "history_days": 7,               // Recent days to keep in full detail
   "history_limit": 50,             // Max saved changes per item
-  "history_noise_protection": true // Ignore one‑off price spikes unless they repeat
+  "history_noise_protection": true // Ignore one-off price spikes unless they repeat
 
   // Advanced history (optional). Leave commented unless you need it.
   // "history": {
