@@ -251,288 +251,6 @@ function recordProxyFailure(proxyUrl){
 
 function hashString(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0 } return h }
 
-function renderDashboardHtml() {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Amazon Monitor</title>
-  <style>
-    :root{--bg:#0b0f14;--panel:#0f1420;--muted:#9fb0c2;--line:#1e2a3a;--fg:#e6edf3;--link:#58a6ff;--chip:#142032;--ok:#33d17a;--out:#f85149}
-    body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:0;background:var(--bg);color:var(--fg)}
-    .container{max-width:1180px;margin:18px auto;padding:0 18px}
-    .meta{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;color:var(--muted)}
-    .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 6px 18px rgba(0,0,0,.25)}
-    /* Table → clean list */
-    table{width:100%;border-collapse:separate;border-spacing:0 8px}
-    thead th{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);padding:10px 12px}
-    tbody td{background:#0f1624;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:12px;vertical-align:middle}
-    tbody tr td:first-child{border-left:1px solid var(--line);border-top-left-radius:10px;border-bottom-left-radius:10px}
-    tbody tr td:last-child{border-right:1px solid var(--line);border-top-right-radius:10px;border-bottom-right-radius:10px}
-    a{color:var(--link);text-decoration:none}
-    .header{display:flex;align-items:center;gap:12px;justify-content:space-between;margin-bottom:14px}
-    .title{font-size:20px;font-weight:700}
-    .toolbar{display:flex;gap:10px;flex:1;justify-content:flex-end;flex-wrap:wrap}
-    .toolbar input{min-width:300px}
-    .btn{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:#121b2b;color:var(--fg);cursor:pointer}
-    .btn.primary{background:#1a2f5a;border-color:#25447e}
-    input,select{padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#0b1220;color:var(--fg)}
-    .muted{color:var(--muted)}
-    .tag{background:var(--chip);border:1px solid var(--line);color:var(--muted);padding:2px 8px;border-radius:999px;font-size:12px}
-    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
-    /* Item column */
-    .itemCell{line-height:1.3}
-    .itemMain{display:flex;align-items:center;gap:8px}
-    .label{font-weight:600}
-    .sub{font-size:12px;color:var(--muted)}
-    .rules{display:flex;gap:8px;flex-wrap:wrap}
-    .actions{display:flex;gap:8px;justify-content:flex-end}
-    details.inline{margin-top:8px}
-  </style>
-  </head>
-  <body>
-    <div class="container">
-    <div class="header">
-      <div class="title">Amazon Monitor</div>
-      <div class="toolbar">
-        <input id="q" placeholder="Search label or URL" />
-        <button id="btn_scan" class="btn primary">Scan now</button>
-        <button id="btn_reload" class="btn">Reload</button>
-      </div>
-    </div>
-    <div class="grid">
-      <div class="card">
-        <div class="meta" id="status">Loading status…</div>
-      </div>
-    <div class="card" style="margin-top:12px">
-        <table>
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Status</th>
-              <th>Price</th>
-              <th>Rules</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="items"><tr><td class="muted" colspan="5">Loading items…</td></tr></tbody>
-        </table>
-      </div>
-      <div class="card">
-        <h2 style="margin:0 0 8px;font-size:16px;color:#a0b3c6">Add item</h2>
-        <form id="addForm" onsubmit="return false" class="meta" style="align-items:center">
-          <input id="f_url" placeholder="URL or ASIN" style="flex:2;min-width:300px" title="Paste a product link or 10‑char ASIN"/>
-          <input id="f_label" placeholder="Label (optional)" style="flex:1;min-width:160px" title="Short name for this item"/>
-          <button id="btn_add" class="btn primary">Add</button>
-          <details class="inline"><summary class="muted">More options</summary>
-            <div class="meta" style="margin-top:8px">
-              <select id="f_wh" title="Warehouse: on = prefer Warehouse; off = ignore; only = alert only on Warehouse">
-                <option value="">warehouse: default</option>
-                <option value="on">warehouse: on</option>
-                <option value="off">warehouse: off</option>
-                <option value="only">warehouse: only</option>
-              </select>
-              <select id="f_alerts" title="Alerts: stock = back‑in‑stock only; price = price‑drop only; none = mute">
-                <option value="">alerts: both (default)</option>
-                <option value="stock">alerts: stock</option>
-                <option value="price">alerts: price</option>
-                <option value="none">alerts: none</option>
-              </select>
-              <input id="f_threshold" type="number" step="0.01" placeholder="threshold $ (optional)" style="width:150px" title="Only alert when the current price is less than or equal to this value"/>
-              <input id="f_drop" type="number" step="1" min="1" max="90" placeholder="drop % (optional)" style="width:130px" title="Percent drop vs baseline"/>
-              <select id="f_base" title="Baseline for drop% rule">
-                <option value="">baseline: last</option>
-                <option value="last">last</option>
-                <option value="lowest">lowest</option>
-                <option value="start">start</option>
-              </select>
-            </div>
-          </details>
-        </form>
-        <details class="meta"><summary class="muted">What do these options mean?</summary>
-          <div class="muted">• <b>URL or ASIN</b>: Paste a full Amazon product link, or the 10‑character product code (ASIN). Example ASIN: B0XXXXXX00.</div>
-          <div class="muted">• <b>Label</b>: A short name you choose so the item is easy to recognize in the console and in Discord messages. Optional.</div>
-          <div class="muted">• <b>Group</b>: Optional tag to organize items (for example “Consoles”, “Food”). You can filter by group later.</div>
-          <div class="muted">• <b>Warehouse</b>:
-             “on” = use Amazon Warehouse price when it exists (otherwise use the main price),
-             “off” = ignore Warehouse and always use the main price,
-             “only” = alert only for Warehouse offers.</div>
-          <div class="muted">• <b>Alerts</b>:
-             “both” (default) = get price‑drop and back‑in‑stock alerts,
-             “stock” = only when it comes back in stock,
-             “price” = only when the price goes down,
-             “none” = no alerts for this item.</div>
-          <div class="muted">• <b>Threshold $</b>: A maximum price. The app will only alert when the current price is less than or equal to this number.</div>
-          <div class="muted">• <b>Drop %</b>: A relative rule. Example: 10 means “alert when the price is at least ten percent lower than the baseline price”.</div>
-          <div class="muted">• <b>Baseline</b>: What “drop %” compares against. “last” (default) = compare to the last seen price, “lowest” = compare to the best price we have ever recorded, “start” = compare to the first price we saw for this item.</div>
-          <div class="muted">• <b>Source / Status / Price</b>: Shows whether the app is using the main offer or a Warehouse offer, whether it is in stock, and the latest price seen.</div>
-          <div class="muted">• <b>Scan now</b>: Runs a scan immediately. It does not change your regular schedule.</div>
-          <div class="muted">• <b>Soft‑ban safety</b>: If Amazon returns a CAPTCHA or a rate‑limit page, the app pauses scanning for about 30 minutes to cool down.</div>
-        </details>
-      </div>
-    </div>
-    </div>
-    <script>
-      async function api(method, path, body){
-        const res = await fetch(path,{method,headers:{'Content-Type':'application/json'},body: body? JSON.stringify(body): undefined})
-        const ct = res.headers.get('content-type')||''
-        return ct.includes('application/json')? res.json(): res.text()
-      }
-      async function load() {
-        try {
-          const s = await fetch('/api/status').then(r=>r.json())
-          const items = await fetch('/api/items').then(r=>r.json()).then(x=>x.items||[])
-          const fmt = ms=> ms>0 ? Math.ceil(ms/60000)+' min' : '0 min'
-          const last = s.lastScanAt ? new Date(s.lastScanAt).toLocaleTimeString() : 'N/A'
-          document.getElementById('status').innerHTML = \`
-            <div><span class=\"muted\">Last scan:</span> \${last}</div>
-            <div><span class=\"muted\">Next scan in:</span> \${fmt(s.nextScanInMs||0)}</div>
-            <div><span class=\"muted\">Cooldown:</span> \${s.coolingMs>0?'\<span class=\\\"warn\\\">'+fmt(s.coolingMs)+'\</span>':'\<span class=\\\"ok\\\">none\</span>'}</div>
-            <div><span class=\"muted\">Schedule:</span> every \${s.minutesPerCheck} min, \${s.secondsBetweenCheck}s between items</div>
-          \`
-        const tbody = document.getElementById('items')
-          if (!items.length) { tbody.innerHTML = '<tr><td class="muted" colspan="5">No items found</td></tr>'; return }
-          tbody.innerHTML = items.map(it=>{
-            const short = it.url.length>70 ? it.url.slice(0,67)+'…' : it.url
-            const thr = (it.threshold!=null && !Number.isNaN(Number(it.threshold))) ? ('$'+Number(it.threshold).toFixed(2)) : '—'
-            const src = it.current && it.current.source ? it.current.source : 'main'
-            const price = it.current && it.current.price ? (it.current.symbol||'$')+Number(it.current.price).toFixed(2) : '—'
-            const status = it.current && it.current.available ? '<span class="badge" style="background:rgba(51,209,122,.15);border:1px solid #1b3a2a;color:#7de3a7">IN STOCK</span>' : '<span class="badge" style="background:rgba(248,81,73,.15);border:1px solid #3a1b1b;color:#f09b97">OUT</span>'
-            const rules = [thr!=='—'?('≤ '+thr):null, it.warehouse?('wh: '+it.warehouse):null, it.alerts?('alerts: '+it.alerts):null].filter(Boolean).map(t=>'<span class="tag">'+t+'</span>').join(' ')
-            return \`<tr>
-              <td class=\"itemCell\">\n                <div class=\"itemMain\">\n                  \${it.group ? '<span class=\\\"tag\\\">'+it.group+'</span>' : ''}\n                  <span class=\"label\">\${it.label?it.label:'(no label)'}</span>\n                </div>\n                <div class=\"sub\"><a href=\"\${it.url}\" target=\"_blank\" rel=\"noreferrer\">\${short}</a> · <span class=\"tag\">\${src}</span></div>\n              </td>
-              <td>\${status}</td>
-              <td>\${price}</td>
-              <td>\${rules||'<span class=\\\"muted\\\">—</span>'}</td>
-              <td class=\"actions\"><button data-asin=\"\${it.asin}\" class=\"hist btn\">History</button> <button data-asin=\"\${it.asin}\" class=\"test btn\">Test</button> <button data-asin=\"\${it.asin}\" class=\"edit btn\">Edit</button> <button data-asin=\"\${it.asin}\" class=\"del btn\">Delete</button></td>
-            </tr>\`
-          }).join('')
-        // history viewer
-        function spark(values){
-          if(!values || values.length===0) return '<span class="muted">No history yet</span>'
-          const w=320,h=48; const min=Math.min(...values), max=Math.max(...values); const r=max-min||1
-          const pts=values.map((v,i)=>{const x=(i/(values.length-1))*w; const y=h-((v-min)/r)*h; return x.toFixed(1)+','+y.toFixed(1)}).join(' ')
-          return '<svg width="'+w+'" height="'+h+'"><polyline fill="none" stroke="#58a6ff" stroke-width="2" points="'+pts+'"/></svg>'
-        }
-        document.querySelectorAll('button.hist').forEach(btn=>{
-          btn.onclick = async ()=>{
-            const asin = btn.getAttribute('data-asin'); if(!asin) return
-            const data = await api('GET','/api/history?asin='+encodeURIComponent(asin))
-            const row = btn.closest('tr'); if(!row) return
-            const old=document.querySelector('tr.viewer'); if(old) old.remove()
-            const prices=(data.history||[]).map(e=>Number(e.price||0)).filter(n=>n>0)
-            const ls=data.lowestSeen? ((data.symbol||'$')+Number(data.lowestSeen.price||0).toFixed(2)+' ('+data.lowestSeen.source+')') : '—'
-            const tr=document.createElement('tr'); tr.className='viewer'
-            if(data && data.disabled){
-              tr.innerHTML='<td colspan="5"><div class="meta"><div class="muted">History is turned off in settings. You can still see "Lowest ever" below.</div><div class="muted">Lowest ever: '+ls+'</div></div></td>'
-            } else {
-              tr.innerHTML='<td colspan="5"><div class="meta"><div>'+spark(prices)+'</div><div class="muted">Lowest ever: '+ls+'</div></div></td>'
-            }
-            row.after(tr)
-          }
-        })
-
-          // wire delete
-          document.querySelectorAll('button.del').forEach(btn=>{
-            btn.onclick = async ()=>{
-              const asin = btn.getAttribute('data-asin')
-              if (!asin) return
-              if (!confirm('Delete this item?')) return
-              await api('DELETE','/api/items?asin='+encodeURIComponent(asin))
-              load()
-            }
-          })
-        // test webhook per item
-        document.querySelectorAll('button.test').forEach(btn=>{
-          btn.onclick = async ()=>{
-            const asin = btn.getAttribute('data-asin'); if(!asin) return
-            const r = await api('POST','/api/test?asin='+encodeURIComponent(asin))
-            alert(r && r.ok ? 'Test alert sent. Check Discord.' : 'Test alert request sent.')
-          }
-        })
-          // wire edit
-          document.querySelectorAll('button.edit').forEach(btn=>{
-            btn.onclick = ()=>{
-              const asin = btn.getAttribute('data-asin')
-              const it = items.find(x=>x.asin===asin); if(!it) return
-              const row = btn.closest('tr'); if(!row) return
-              const old = document.querySelector('tr.editor'); if(old) old.remove()
-              const tr = document.createElement('tr'); tr.className='editor'
-              const thrVal = (it.threshold!=null && !isNaN(Number(it.threshold))) ? Number(it.threshold).toFixed(2) : ''
-              tr.innerHTML = '<td colspan="5">'
-                + '<div class="meta">'
-                + '<input id="e_label" value="'+(it.label||'')+'" placeholder="Label"/>'
-                + '<input id="e_group" value="'+(it.group||'')+'" placeholder="Group"/>'
-                + '<select id="e_wh">'
-                +   '<option value="">warehouse: default</option>'
-                +   '<option value="on"'+(it.warehouse==='on'?' selected':'')+'>warehouse: on</option>'
-                +   '<option value="off"'+(it.warehouse==='off'?' selected':'')+'>warehouse: off</option>'
-                +   '<option value="only"'+(it.warehouse==='only'?' selected':'')+'>warehouse: only</option>'
-                + '</select>'
-                + '<select id="e_alerts">'
-                +   '<option value=""'+(it.alerts==='both'?' selected':'')+'>alerts: both</option>'
-                +   '<option value="stock"'+(it.alerts==='stock'?' selected':'')+'>stock</option>'
-                +   '<option value="price"'+(it.alerts==='price'?' selected':'')+'>price</option>'
-                +   '<option value="none"'+(it.alerts==='none'?' selected':'')+'>none</option>'
-                + '</select>'
-                + '<input id="e_threshold" type="number" step="0.01" value="'+thrVal+'" placeholder="threshold $"/>'
-                + '<input id="e_drop" type="number" step="1" min="1" max="90" value="'+(it.thresholdDrop||'')+'" placeholder="drop %"/>'
-                + '<select id="e_baseline">'
-                +   '<option value=""'+(!it.baseline?' selected':'')+'>baseline: last</option>'
-                +   '<option value="last"'+(it.baseline==='last'?' selected':'')+'>last</option>'
-                +   '<option value="lowest"'+(it.baseline==='lowest'?' selected':'')+'>lowest</option>'
-                +   '<option value="start"'+(it.baseline==='start'?' selected':'')+'>start</option>'
-                + '</select>'
-                + '<button id="e_save" class="btn primary">Save</button>'
-                + '<button id="e_cancel" class="btn">Cancel</button>'
-                + '</div>'
-                + '</td>'
-              row.after(tr)
-              document.getElementById('e_cancel').onclick = ()=> tr.remove()
-              document.getElementById('e_save').onclick = async ()=>{
-                const payload = { asin }
-                const lab=document.getElementById('e_label').value.trim(); if(lab) payload.label=lab
-                const grp=document.getElementById('e_group').value.trim(); if(grp) payload.group=grp
-                const wh=document.getElementById('e_wh').value; if(wh) payload.warehouse=wh
-                const al=document.getElementById('e_alerts').value; if(al) payload.alerts=al
-                const th=document.getElementById('e_threshold').value; if(th) payload.threshold=Number(th)
-                const dp=document.getElementById('e_drop').value; if(dp) payload.thresholdDrop=Number(dp)
-                const bs=document.getElementById('e_baseline').value; if(bs) payload.baseline=bs
-                const res = await api('PUT','/api/items', payload)
-                if(res && res.error){ alert(res.error) } else { tr.remove(); load() }
-              }
-            }
-          })
-        } catch(e) {
-          document.getElementById('status').innerHTML = '<span class="warn">Failed to load status</span>'
-        }
-      }
-      // refresh only when no editor is open
-      load();
-      setInterval(()=>{ if(!document.querySelector('tr.editor')) load() }, 8000)
-
-      // add form
-      document.getElementById('btn_add').onclick = async ()=>{
-        const url = document.getElementById('f_url').value.trim()
-        if(!url){ alert('Please enter a URL or ASIN'); return }
-        const body = { urlOrAsin: url }
-        const label = document.getElementById('f_label').value.trim(); if(label) body.label = label
-        const wh = document.getElementById('f_wh').value; if(wh) body.warehouse = wh
-        const al = document.getElementById('f_alerts').value; if(al) body.alerts = al
-        const th = document.getElementById('f_threshold').value; if(th) body.threshold = Number(th)
-        const dpEl = document.getElementById('f_drop'); if(dpEl && dpEl.value) body.thresholdDrop = Number(dpEl.value)
-        const bsEl = document.getElementById('f_base'); if(bsEl && bsEl.value) body.baseline = bsEl.value
-        const res = await api('POST','/api/items', body)
-        if(res && res.error){ alert(res.error) }
-        else { document.getElementById('addForm').reset(); load() }
-      }
-      document.getElementById('btn_reload').onclick = ()=> load()
-      document.getElementById('btn_scan').onclick = async ()=>{ await api('POST','/api/scan'); setTimeout(load, 1500) }
-    </script>
-  </body>
-  </html>`
-}
 
 function getLocaleCookieForTld(tld) {
   switch (tld) {
@@ -939,6 +657,83 @@ async function postWebhook(embed) {
   })
 }
 
+async function postTelegram(message, imageUrl = null) {
+  if (!config.telegram_bot_token || !config.telegram_chat_id) return
+  
+  const baseUrl = `https://api.telegram.org/bot${config.telegram_bot_token}`
+  
+  try {
+    if (imageUrl) {
+      // Send photo with caption
+      await fetch(`${baseUrl}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: config.telegram_chat_id,
+          photo: imageUrl,
+          caption: message,
+          parse_mode: 'HTML'
+        })
+      })
+    } else {
+      // Send text message
+      await fetch(`${baseUrl}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: config.telegram_chat_id,
+          text: message,
+          parse_mode: 'HTML'
+        })
+      })
+    }
+  } catch (error) {
+    dbg(`Telegram notification failed: ${error.message}`)
+  }
+}
+
+async function searchAmazonProducts(query) {
+  const searchUrl = `https://www.amazon.${config.tld}/s?k=${encodeURIComponent(query)}&ref=sr_pg_1`
+  
+  try {
+    const { $, softBan } = await fetchPage(searchUrl)
+    if (softBan) return { error: 'Amazon search blocked (rate limited)' }
+    
+    const results = []
+    const productElements = $('[data-component-type="s-search-result"]').slice(0, 10) // Limit to 10 results
+    
+    productElements.each((i, elem) => {
+      const $product = $(elem)
+      const titleElement = $product.find('h2 a span')
+      const title = titleElement.first().text().trim()
+      
+      const priceElement = $product.find('.a-price .a-offscreen').first()
+      const price = priceElement.text().trim()
+      
+      const linkElement = $product.find('h2 a')
+      const href = linkElement.attr('href')
+      const asin = href ? extractAsin(`https://www.amazon.${config.tld}${href}`) : null
+      
+      const imageElement = $product.find('img').first()
+      const image = imageElement.attr('src') || imageElement.attr('data-src')
+      
+      if (title && asin) {
+        results.push({
+          asin,
+          title,
+          price: price || 'Price not available',
+          image: image || null,
+          url: `https://www.amazon.${config.tld}/dp/${asin}`
+        })
+      }
+    })
+    
+    return { results }
+  } catch (error) {
+    return { error: `Search failed: ${error.message}` }
+  }
+}
+
 async function checkOnce() {
   // Respect soft-ban cooldown
   const now = Date.now()
@@ -1160,24 +955,37 @@ async function checkOnce() {
         }
         const titleLine = label ? `${label}` : `${info.title || 'N/A'}`
         if (!notifyOnce || signature !== lastSig) {
-          await postWebhook({
-          title: `Back in stock for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
-          description: `${desc}\n\n${finalUrl}`,
-          thumbnail: info.image ? { url: info.image } : undefined,
-          color: 0x0099ff,
-          })
+          const embed = {
+            title: `Back in stock for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
+            description: `${desc}\n\n${finalUrl}`,
+            thumbnail: info.image ? { url: info.image } : undefined,
+            color: 0x0099ff,
+          }
+          await postWebhook(embed)
+          
+          // Also send to Telegram
+          const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b>${usingWh ? ' (Amazon Warehouse)' : ''}\n\n💰 <b>Price:</b> ${info.symbol}${newPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>`
+          await postTelegram(telegramMessage, info.image)
+          
           sent++
           state[finalUrl].lastNotified = signature
         }
       } else if (allowPriceAlerts && prev && newPrice > 0 && prevPrice > 0 && newPrice < prevPrice && passesThreshold) {
         const diff = (prev.lastPrice - info.lastPrice).toFixed(2)
         if (!notifyOnce || signature !== lastSig) {
-          await postWebhook({
-          title: `Price alert for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
-          description: `Old Price: ${prev.symbol}${prevPrice.toFixed(2)}\nNew Price: ${info.symbol}${newPrice.toFixed(2)}\nDiff: ${info.symbol}${(prevPrice - newPrice).toFixed(2)}\n\n${finalUrl}`,
-          thumbnail: info.image ? { url: info.image } : undefined,
-          color: 0x00ff00,
-          })
+          const embed = {
+            title: `Price alert for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
+            description: `Old Price: ${prev.symbol}${prevPrice.toFixed(2)}\nNew Price: ${info.symbol}${newPrice.toFixed(2)}\nDiff: ${info.symbol}${(prevPrice - newPrice).toFixed(2)}\n\n${finalUrl}`,
+            thumbnail: info.image ? { url: info.image } : undefined,
+            color: 0x00ff00,
+          }
+          await postWebhook(embed)
+          
+          // Also send to Telegram
+          const discount = ((prevPrice - newPrice) / prevPrice * 100).toFixed(1)
+          const telegramMessage = `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b>${usingWh ? ' (Amazon Warehouse)' : ''}\n\n💰 <b>Old Price:</b> ${prev.symbol}${prevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${newPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${(prevPrice - newPrice).toFixed(2)} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>`
+          await postTelegram(telegramMessage, info.image)
+          
           sent++
           state[finalUrl].lastNotified = signature
         }
@@ -1231,7 +1039,16 @@ async function main() {
       const url = new URL(req.url, `http://localhost:${port}`)
       if (url.pathname === '/' || url.pathname === '/index.html') {
         res.setHeader('Content-Type', 'text/html; charset=utf-8')
-        res.end(renderDashboardHtml())
+        const dashboardPath = new URL('./dashboard.html', import.meta.url)
+        const html = fs.readFileSync(dashboardPath, 'utf-8')
+        res.end(html)
+        return
+      }
+      if (url.pathname === '/dashboard.js') {
+        res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
+        const jsPath = new URL('./dashboard.js', import.meta.url)
+        const js = fs.readFileSync(jsPath, 'utf-8')
+        res.end(js)
         return
       }
       res.setHeader('Content-Type', 'application/json')
@@ -1245,6 +1062,7 @@ async function main() {
           lastScanAt,
           nextScanInMs,
           coolingMs,
+          tld: config.tld || 'com',
         }))
         return
       }
@@ -1363,13 +1181,20 @@ async function main() {
             return {
               url: urlStr,
               asin,
+              title: st.title || null,
               label: e.label || null,
               group: e.group || null,
+              image: st.image || null,
               alerts: (e.allowStockAlerts && e.allowPriceAlerts) ? 'both' : (e.allowStockAlerts ? 'stock' : (e.allowPriceAlerts ? 'price' : 'none')),
               warehouse: e.useWarehouse === 'only' ? 'only' : (e.useWarehouse === true ? 'on' : (e.useWarehouse === false ? 'off' : (DEFAULT_WAREHOUSE ? 'on' : 'off'))),
+              useWarehouse: currentSourceIsWh,
               threshold: e.threshold ?? null,
               thresholdDrop: e.thresholdDrop ?? null,
               baseline: e.baseline || null,
+              currentPrice: currentPrice || 0,
+              oldPrice: st.lastPrice || 0,
+              available: !!currentAvail,
+              symbol: symbol,
               current: { price: currentPrice || 0, available: !!currentAvail, source: currentSourceIsWh ? 'warehouse' : 'main', symbol },
               lowestSeen: st.lowestSeen || null,
               history: st.history || []
@@ -1422,6 +1247,50 @@ async function main() {
             const prev = fs.existsSync(p) ? fs.readFileSync(p).toString() : ''
             const next = prev.endsWith('\n') || prev.length===0 ? prev + line + '\n' : prev + '\n' + line + '\n'
             fs.writeFileSync(p, next)
+            
+            // Immediately fetch product info for better UX
+            const asin = extractAsin(urlOrAsin)
+            if (asin) {
+              // Trigger immediate scan for this product in the background
+              setImmediate(async () => {
+                try {
+                  const productUrl = `https://www.amazon.${config.tld}/dp/${asin}`
+                  const { $, softBan } = await fetchPage(productUrl)
+                  if (!softBan && $) {
+                    const info = await parseItem($, productUrl, false)
+                    if (info.title) {
+                      // Store in watch.json immediately
+                      const state = loadWatch()
+                      if (!state[productUrl]) {
+                        state[productUrl] = {
+                          lastPrice: info.price,
+                          symbol: info.symbol,
+                          title: info.title,
+                          image: info.image,
+                          available: info.available,
+                          warehouse: info.warehouse || null,
+                          threshold: null,
+                          thresholdDrop: null,
+                          baseline: null,
+                          useWarehouse: config.default_warehouse,
+                          alerts: 'both',
+                          label: label || null,
+                          group: group || null,
+                          notifyOnce: false,
+                          lowestSeen: { source: 'main', price: info.price, ts: Date.now() },
+                          history: [{ ts: Date.now(), source: 'main', price: info.price }]
+                        }
+                        saveWatch(state)
+                        log(`✓ Immediately fetched info for new product: ${info.title}`)
+                      }
+                    }
+                  }
+                } catch (e) {
+                  log(`Failed to immediately fetch product info: ${e.message}`)
+                }
+              })
+            }
+            
             res.end(JSON.stringify({ ok: true }))
           } catch (e) {
             res.statusCode = 400
@@ -1483,13 +1352,64 @@ async function main() {
           const p = new URL('./urls.txt', import.meta.url)
           const prev = fs.existsSync(p) ? fs.readFileSync(p).toString() : ''
           const lines = prev.split(/\r?\n/)
-          const kept = lines.filter(l => !l.trim() || extractAsin(l) !== asin)
+          const kept = lines.filter(l => {
+            if (!l.trim()) return true
+            const parts = l.split('|').map(x => x.trim())
+            const lineAsin = extractAsin(parts[0])
+            return lineAsin !== asin
+          })
           fs.writeFileSync(p, kept.join('\n'))
           res.end(JSON.stringify({ ok: true }))
         } catch(e) {
           res.statusCode = 500
           res.end(JSON.stringify({ error: 'Failed to delete' }))
         }
+        return
+      }
+      if (url.pathname === '/api/search' && req.method === 'POST') {
+        let body = ''
+        req.on('data', c => { body += c })
+        req.on('end', async () => {
+          try {
+            const data = JSON.parse(body || '{}')
+            const { query } = data
+            if (!query || typeof query !== 'string') {
+              res.statusCode = 400
+              return res.end(JSON.stringify({ error: 'query is required' }))
+            }
+            
+            // Check if it's a URL or ASIN first
+            const asin = extractAsin(query)
+            if (asin) {
+              try {
+                const productUrl = `https://www.amazon.${config.tld}/dp/${asin}`
+                const { $, softBan } = await fetchPage(productUrl)
+                if (!softBan) {
+                  const info = await parseItem($, productUrl, false)
+                  if (info.title) {
+                    res.end(JSON.stringify({ 
+                      results: [{
+                        asin,
+                        title: info.title,
+                        price: info.price ? `${info.symbol}${parseFloat(info.price).toFixed(2)}` : 'Price unavailable',
+                        image: info.image,
+                        url: productUrl
+                      }]
+                    }))
+                    return
+                  }
+                }
+              } catch {}
+            }
+            
+            // Otherwise perform Amazon search
+            const searchResult = await searchAmazonProducts(query)
+            res.end(JSON.stringify(searchResult))
+          } catch (e) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ error: 'Invalid request' }))
+          }
+        })
         return
       }
       res.statusCode = 404

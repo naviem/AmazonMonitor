@@ -4,11 +4,13 @@
   "seconds_between_check": 60, // Delay between each item (seconds) to be polite
   "tld": "ca",                 // Which Amazon site to use (examples: "ca", "com", "co.uk", "de")
   "url_params": {},            // Extra query parameters to append to all product URLs (usually leave empty)
-  "webhook_url": "ENTER_WEBHOOK_HERE", 
+  "webhook_url": "ENTER_WEBHOOK_HERE",
+  "telegram_bot_token": "",           // Telegram bot token from @BotFather (optional)
+  "telegram_chat_id": "",             // Your Telegram chat ID (optional) 
   "default_warehouse": true,   // Prefer Amazon Warehouse offers when available (on by default)
   "debug": true,               // Extra logs in the terminal to help diagnose issues
-  "server": false,             // Enable the local dashboard (cleaner than using the txt file for changes, not required though)
-  "port": 3025,                // Port you want to use for the dashboard (ex. localhost:3025)
+  "server": true,              // Enable the local dashboard (cleaner than using the txt file for changes, not required though)
+  "port": 3026,                // Port you want to use for the dashboard (ex. localhost:3025)
 
   // ============= User Agent rotation (helps avoid blocks) =======================================
 

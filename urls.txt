@@ -35,4 +35,3 @@
 # https://www.amazon.com/dp/B0XXXXX123|warehouse=only|alerts=stock
 # https://www.amazon.com/dp/B0XXXXX123|label="VR2 Bundle"|notify=once
 
-B0C2XNQNN9|label="Razer Nommo"|warehouse=on|alerts=price

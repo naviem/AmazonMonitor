@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Amazon Monitor Dashboard</title>
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    :root {
+      /* 2025 Premium Color System */
+      --primary: #3b82f6; --primary-hover: #2563eb; --primary-light: #dbeafe; --primary-dark: #1e40af;
+      --success: #10b981; --success-hover: #059669; --success-light: #d1fae5; --success-dark: #047857;
+      --danger: #ef4444; --danger-hover: #dc2626; --danger-light: #fee2e2; --danger-dark: #b91c1c;
+      --warning: #f59e0b; --warning-hover: #d97706; --warning-light: #fef3c7; --warning-dark: #b45309;
+      --info: #06b6d4; --info-hover: #0891b2; --info-light: #cffafe; --info-dark: #0e7490;
+      --accent: #8b5cf6; --accent-hover: #7c3aed; --accent-light: #ede9fe; --accent-dark: #6d28d9;
+      
+      /* Clean Modern Backgrounds */
+      --bg-primary: #ffffff;
+      --bg-secondary: #f8fafc;
+      --bg-tertiary: #f1f5f9;
+      --bg-surface: #ffffff;
+      --bg-elevated: #ffffff;
+      --bg-glass: rgba(255, 255, 255, 0.8);
+      
+      /* Typography Hierarchy */
+      --text-primary: #0f172a;
+      --text-secondary: #334155;
+      --text-muted: #64748b;
+      --text-placeholder: #94a3b8;
+      --text-inverse: #ffffff;
+      
+      /* Refined Borders */
+      --border: #e2e8f0;
+      --border-light: #f1f5f9;
+      --border-strong: #cbd5e1;
+      --border-focus: #3b82f6;
+      --border-error: #ef4444;
+      --border-radius: 8px;
+      --border-radius-lg: 12px;
+      --border-radius-xl: 16px;
+      
+      /* Sophisticated Shadows */
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+      --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+      --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+      --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+      
+      /* Premium Gradients */
+      --gradient-primary: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+      --gradient-success: linear-gradient(135deg, #10b981 0%, #047857 100%);
+      --gradient-surface: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+      --gradient-hero: linear-gradient(135deg, #667eea 0%, #764ba2 40%, #f093fb 100%);
+    }
+    
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-primary: #0f172a;
+        --bg-secondary: #1e293b;
+        --bg-tertiary: #334155;
+        --text-primary: #f1f5f9;
+        --text-secondary: #cbd5e1;
+        --text-muted: #94a3b8;
+        --border: #334155;
+        --border-light: #475569;
+        --primary-light: #1e1b4b;
+        --success-light: #064e3b;
+        --danger-light: #7f1d1d;
+        --warning-light: #78350f;
+        --info-light: #1e3a8a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', 'Roboto', sans-serif;
+      margin: 0; padding: 0; background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+      color: var(--text-primary); line-height: 1.6; -webkit-font-smoothing: antialiased;
+    }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    
+    .header {
+      background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #06b6d4 100%);
+      padding: 40px 24px; border-radius: var(--border-radius-xl); margin-bottom: 32px;
+      box-shadow: var(--shadow-xl); text-align: center; border: none;
+      position: relative; overflow: hidden;
+    }
+    .header::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(45deg, rgba(255,255,255,0.1) 0%, transparent 50%, rgba(255,255,255,0.05) 100%);
+      z-index: 1; pointer-events: none;
+    }
+    .header h1 {
+      margin: 0; font-size: 2.5rem; font-weight: 800; color: white;
+      position: relative; z-index: 2; display: flex; align-items: center;
+      justify-content: center; gap: 12px; text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      letter-spacing: -0.5px;
+    }
+    .header h1 i { font-size: 2.25rem; }
+    
+    .status-bar {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 24px; margin-bottom: 32px;
+    }
+    .status-card {
+      background: var(--bg-surface); padding: 20px; border-radius: var(--border-radius-lg);
+      border: 1px solid var(--border); box-shadow: var(--shadow-sm); text-align: center;
+      transition: all 0.2s ease; position: relative; overflow: hidden;
+    }
+    .status-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: linear-gradient(90deg, var(--primary) 0%, var(--info) 100%);
+    }
+    .status-card:hover {
+      transform: translateY(-2px); box-shadow: var(--shadow-md);
+      border-color: var(--border-strong);
+    }
+    .status-value { 
+      font-size: 2rem; font-weight: 700; margin-bottom: 6px; 
+      color: var(--primary);
+    }
+    .status-label { color: var(--text-secondary); font-size: 0.875rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
+    
+    .card {
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: var(--border-radius-xl); padding: 24px; margin-bottom: 24px; 
+      box-shadow: var(--shadow); transition: all 0.3s ease;
+    }
+    .card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+    
+    .card-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 28px; flex-wrap: wrap; gap: 16px;
+    }
+    .card-title {
+      margin: 0; font-size: 1.75rem; font-weight: 700; color: var(--text-primary);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .search-section { 
+      background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f8fafc 100%);
+      color: var(--text-primary); border: 1px solid var(--border-light);
+      position: relative; overflow: hidden;
+    }
+    .search-section::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      background: url("data:image/svg+xml,%3csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3e%3cg fill='%23ffffff' fill-opacity='0.03'%3e%3cpath d='M20 20c0-8.837-7.163-16-16-16s-16 7.163-16 16 7.163 16 16 16 16-7.163 16-16zm16 0c0-8.837-7.163-16-16-16s-16 7.163-16 16 7.163 16 16 16 16-7.163 16-16z'/%3e%3c/g%3e%3c/svg%3e") repeat;
+      z-index: -1; pointer-events: none;
+    }
+    .search-container { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
+    .search-input {
+      flex: 1; min-width: 300px; padding: 14px 18px;
+      border: 1px solid rgba(59, 130, 246, 0.2); border-radius: var(--border-radius);
+      background: white; color: var(--text-primary); font-size: 14px;
+      transition: all 0.2s ease; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+    .search-input:focus {
+      outline: none; border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px var(--primary-light);
+    }
+    .search-input::placeholder { color: var(--text-placeholder); }
+    .search-results {
+      display: none; background: var(--bg-tertiary);
+      border-radius: var(--border-radius); padding: 20px; margin-top: 15px;
+      border: 1px solid var(--border);
+    }
+    .form-group {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px; margin-bottom: 20px;
+    }
+    .form-row { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; }
+    .form-group label {
+      display: block; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;
+      font-size: 0.875rem; position: relative;
+    }
+    
+    .form-control {
+      padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--border-radius);
+      background: var(--bg-surface); color: var(--text-primary); font-size: 14px;
+      transition: all 0.2s ease; width: 100%; font-family: inherit;
+      position: relative; z-index: 1; pointer-events: auto;
+    }
+    .form-control:focus {
+      outline: none; border-color: var(--border-focus); 
+      box-shadow: 0 0 0 3px var(--primary-light);
+      transform: none;
+    }
+    .form-control:hover { border-color: var(--border-strong); }
+    .form-control::placeholder { color: var(--text-placeholder); }
+    
+    .btn {
+      padding: 12px 24px; border: 1px solid transparent; border-radius: var(--border-radius);
+      cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s ease;
+      display: inline-flex; align-items: center; gap: 8px; text-decoration: none;
+      position: relative; overflow: hidden;
+    }
+    .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+    .btn:active { transform: translateY(0px); }
+    
+    .btn-primary { background: var(--primary); color: white; border: none; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-success { background: var(--success); color: white; border: none; }
+    .btn-success:hover { background: var(--success-hover); }
+    .btn-danger { background: var(--danger); color: white; border: none; }
+    .btn-danger:hover { background: var(--danger-hover); }
+    .btn-outline { 
+      background: transparent; border: 1px solid var(--border-strong); color: var(--text-secondary);
+    }
+    .btn-outline:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+    .btn-sm { padding: 10px 20px; font-size: 13px; }
+    .btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
+    .item-grid { display: grid; gap: 16px; }
+    @media (min-width: 768px) {
+      .item-grid { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); }
+    }
+    .item-card {
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: var(--border-radius-lg); padding: 20px; transition: all 0.2s ease;
+      box-shadow: var(--shadow-sm);
+    }
+    .item-card:hover {
+      border-color: var(--border-strong); transform: translateY(-1px); 
+      box-shadow: var(--shadow-md);
+    }
+    .item-header { display: flex; gap: 20px; margin-bottom: 15px; }
+    .item-image {
+      width: 100px; height: 100px; object-fit: cover; border-radius: 8px;
+      flex-shrink: 0; border: 1px solid var(--border);
+    }
+    .item-details { flex: 1; min-width: 0; }
+    .item-title {
+      font-weight: 600; font-size: 1.1rem; margin-bottom: 8px; line-height: 1.4;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .item-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+    .badge {
+      padding: 4px 8px; border-radius: 12px; font-size: 0.75rem;
+      font-weight: 600; text-transform: uppercase;
+    }
+    .badge-success { background: var(--success); color: white; }
+    .badge-danger { background: var(--danger); color: white; }
+    .badge-info { background: var(--info); color: white; }
+    .badge-warning { background: var(--warning); color: var(--dark); }
+    .price-info {
+      display: flex; align-items: center; gap: 15px; margin-bottom: 15px; flex-wrap: wrap;
+    }
+    .current-price { font-size: 1.5rem; font-weight: 700; color: var(--success); }
+    .old-price { text-decoration: line-through; color: var(--text-secondary); font-size: 1.1rem; }
+    .price-change {
+      padding: 4px 8px; border-radius: 6px; font-weight: 600; font-size: 0.85rem;
+    }
+    .price-change.positive { background: rgba(220, 53, 69, 0.1); color: var(--danger); }
+    .price-change.negative { background: rgba(40, 167, 69, 0.1); color: var(--success); }
+    .item-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+    .empty-state i { font-size: 4rem; margin-bottom: 20px; opacity: 0.5; }
+    .loading {
+      display: flex; justify-content: center; align-items: center; padding: 40px;
+      font-size: 1.1rem; color: var(--text-secondary);
+    }
+    .spinner {
+      border: 3px solid var(--border); border-top: 3px solid var(--primary);
+      border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin-right: 15px;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .notification {
+      position: fixed; top: 20px; right: 20px; padding: 15px 20px; border-radius: 8px;
+      color: white; font-weight: 500; z-index: 1000; transform: translateX(400px);
+      transition: transform 0.3s ease;
+    }
+    .notification.show { transform: translateX(0); }
+    .notification.success { background: var(--success); }
+    .notification.error { background: var(--danger); }
+    .notification.info { background: var(--info); }
+    @media (max-width: 768px) {
+      .container { padding: 15px; } .header { padding: 20px; } .header h1 { font-size: 2rem; }
+      .card { padding: 20px; } .item-header { flex-direction: column; } .item-image { align-self: center; }
+      .form-group { grid-template-columns: 1fr; } .search-input { min-width: 100%; }
+      .btn-group { justify-content: center; } .status-bar { grid-template-columns: 1fr; }
+    }
+    
+    /* Help Section Styling */
+    .help-section {
+      margin-top: 30px; background: rgba(255,255,255,0.05);
+      border-radius: 12px; overflow: hidden; backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .help-details { border: none; }
+    .help-summary {
+      padding: 20px; background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%);
+      cursor: pointer; display: flex; align-items: center; gap: 15px; font-weight: 600;
+      font-size: 1.1rem; color: var(--text-primary); transition: all 0.3s ease;
+      border-radius: 12px; margin-bottom: 0; list-style: none;
+    }
+    .help-summary:hover { background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%); }
+    .help-summary::-webkit-details-marker { display: none; }
+    .help-chevron { 
+      margin-left: auto; transition: transform 0.3s ease; color: var(--text-secondary);
+    }
+    .help-details[open] .help-chevron { transform: rotate(180deg); }
+    .help-content {
+      padding: 0 20px 30px 20px; animation: slideDown 0.3s ease;
+    }
+    .help-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 25px; margin-top: 20px;
+    }
+    .help-item {
+      background: rgba(255,255,255,0.05); padding: 20px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .help-item h4 {
+      color: var(--primary); margin: 0 0 15px 0; display: flex; align-items: center; gap: 10px;
+      font-size: 1.1rem; font-weight: 600;
+    }
+    .help-item p { margin: 0 0 10px 0; color: var(--text-secondary); line-height: 1.6; }
+    .help-item ul { margin: 0; padding-left: 20px; }
+    .help-item li { margin-bottom: 8px; color: var(--text-primary); line-height: 1.5; }
+    .help-item li strong { color: var(--accent); font-weight: 600; }
+    
+    /* Tooltip Styling */
+    .tooltip {
+      position: relative; display: inline-flex; cursor: help; margin-left: 5px;
+      color: var(--text-secondary); transition: color 0.2s ease;
+    }
+    .tooltip:hover { color: var(--primary); }
+    .tooltip::after {
+      content: attr(data-tooltip); position: absolute; bottom: 125%; left: 50%;
+      transform: translateX(-50%); background: #1f2937; color: white;
+      padding: 12px 16px; border-radius: 8px; font-size: 0.85rem; line-height: 1.4;
+      white-space: normal; width: 280px; max-width: 90vw; opacity: 0; 
+      visibility: hidden; transition: all 0.3s ease; font-weight: 500;
+      z-index: 1000; box-shadow: var(--shadow-xl); border: 1px solid #374151;
+    }
+    .tooltip::before {
+      content: ''; position: absolute; bottom: 115%; left: 50%; transform: translateX(-50%);
+      border: 6px solid transparent; border-top-color: #1f2937;
+      opacity: 0; visibility: hidden; transition: all 0.3s ease;
+    }
+    .tooltip:hover::after,
+    .tooltip:hover::before { opacity: 1; visibility: visible; }
+    
+    /* Animations */
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1><i class="fas fa-shopping-cart"></i> Amazon Monitor Dashboard</h1>
+    </div>
+    
+    <div class="status-bar" id="statusBar">
+      <div class="status-card">
+        <div class="status-value" id="totalItems">-</div>
+        <div class="status-label">Tracked Items</div>
+      </div>
+      <div class="status-card">
+        <div class="status-value" id="nextScan">-</div>
+        <div class="status-label">Next Scan</div>
+      </div>
+      <div class="status-card">
+        <div class="status-value" id="scanInterval">-</div>
+        <div class="status-label">Scan Interval</div>
+      </div>
+      <div class="status-card">
+        <div class="status-value" id="systemStatus">-</div>
+        <div class="status-label">System Status</div>
+      </div>
+    </div>
+    
+    <div class="card search-section">
+      <div class="card-header">
+        <h2 class="card-title"><i class="fas fa-search"></i> Search & Add Products</h2>
+      </div>
+      
+      <div class="search-container">
+        <input type="text" id="searchInput" class="search-input" placeholder="Enter Amazon URL, ASIN, or search term...">
+        <button type="button" id="searchBtn" class="btn btn-success"><i class="fas fa-search"></i> Search</button>
+      </div>
+      
+      <div id="searchResults" class="search-results"></div>
+      
+      <form id="addForm">
+        <div class="form-group">
+          <div>
+            <label>Product URL/ASIN * <span class="tooltip" data-tooltip="Paste a full Amazon product link or just the 10-character product code (ASIN). Example: B0C2XNQNN9"><i class="fas fa-info-circle"></i></span></label>
+            <input type="text" id="f_url" class="form-control" placeholder="https://amazon.com/dp/B123... or B123456789" required>
+          </div>
+          <div>
+            <label>Label <span class="tooltip" data-tooltip="A custom name to easily identify this product in your dashboard and notifications"><i class="fas fa-info-circle"></i></span></label>
+            <input type="text" id="f_label" class="form-control" placeholder="e.g., Gaming Headset, VR Bundle">
+          </div>
+          <div>
+            <label>Group <span class="tooltip" data-tooltip="Optional category to organize your products (e.g., Electronics, Books, Clothing)"><i class="fas fa-info-circle"></i></span></label>
+            <input type="text" id="f_group" class="form-control" placeholder="e.g., Electronics, Books">
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <div>
+            <label>Price Threshold <span class="tooltip" data-tooltip="Only alert when the price drops to or below this amount. Leave empty for any price drop."><i class="fas fa-info-circle"></i></span></label>
+            <input type="number" id="f_threshold" class="form-control" placeholder="e.g., 199.99" step="0.01" min="0">
+          </div>
+          <div>
+            <label>Threshold Drop % <span class="tooltip" data-tooltip="Alert when price drops by this percentage. Example: 10 = alert when 10% cheaper than baseline"><i class="fas fa-info-circle"></i></span></label>
+            <input type="number" id="f_drop" class="form-control" placeholder="e.g., 15" step="1" min="1" max="90">
+          </div>
+          <div>
+            <label>Baseline <span class="tooltip" data-tooltip="What price to compare percentage drops against: Last=most recent price, Lowest=best price ever seen, Start=first price when added"><i class="fas fa-info-circle"></i></span></label>
+            <select id="f_base" class="form-control">
+              <option value="">Last Price (Default)</option>
+              <option value="last">Last Price</option>
+              <option value="lowest">Lowest Price Ever</option>
+              <option value="start">Starting Price</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <div>
+            <label>Amazon Warehouse <span class="tooltip" data-tooltip="Warehouse deals are discounted returns/open-box items. On=prefer warehouse deals, Off=ignore warehouse, Only=warehouse deals only"><i class="fas fa-info-circle"></i></span></label>
+            <select id="f_warehouse" class="form-control">
+              <option value="">Use Global Setting</option>
+              <option value="on">Include Warehouse Deals</option>
+              <option value="off">Exclude Warehouse Deals</option>
+              <option value="only">Warehouse Deals Only</option>
+            </select>
+          </div>
+          <div>
+            <label>Alert Types <span class="tooltip" data-tooltip="Choose what triggers notifications: All=price drops & restocks, Stock=restock only, Price=price drops only, None=no alerts"><i class="fas fa-info-circle"></i></span></label>
+            <select id="f_alerts" class="form-control">
+              <option value="">All Alerts (Price + Stock)</option>
+              <option value="stock">Back-in-Stock Only</option>
+              <option value="price">Price Drops Only</option>
+              <option value="none">No Alerts</option>
+            </select>
+          </div>
+          <div style="display: flex; align-items: end;">
+            <button type="submit" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
+          </div>
+        </div>
+      </form>
+      
+      <!-- Help Section -->
+      <div class="help-section">
+        <details class="help-details">
+          <summary class="help-summary">
+            <i class="fas fa-question-circle"></i>
+            <span>Need help? Click here for detailed explanations</span>
+            <i class="fas fa-chevron-down help-chevron"></i>
+          </summary>
+          <div class="help-content">
+            <div class="help-grid">
+              <div class="help-item">
+                <h4><i class="fas fa-link"></i> URLs & ASINs</h4>
+                <p>You can add products using:</p>
+                <ul>
+                  <li><strong>Full Amazon URLs:</strong> https://amazon.com/dp/B0C2XNQNN9</li>
+                  <li><strong>Just the ASIN:</strong> B0C2XNQNN9 (10-character product code)</li>
+                  <li><strong>Search above:</strong> Find products by searching product names</li>
+                </ul>
+              </div>
+              
+              <div class="help-item">
+                <h4><i class="fas fa-dollar-sign"></i> Price Thresholds</h4>
+                <p>Control when you get notified:</p>
+                <ul>
+                  <li><strong>Fixed Threshold:</strong> Alert only when price ≤ $199.99</li>
+                  <li><strong>Percentage Drop:</strong> Alert when price drops by 15%</li>
+                  <li><strong>Both:</strong> Use both for maximum control</li>
+                </ul>
+              </div>
+              
+              <div class="help-item">
+                <h4><i class="fas fa-warehouse"></i> Amazon Warehouse</h4>
+                <p>Discounted open-box & returned items:</p>
+                <ul>
+                  <li><strong>Include:</strong> Monitor both regular & warehouse prices</li>
+                  <li><strong>Only:</strong> Track warehouse deals exclusively</li>
+                  <li><strong>Exclude:</strong> Ignore warehouse, regular prices only</li>
+                </ul>
+              </div>
+              
+              <div class="help-item">
+                <h4><i class="fas fa-bell"></i> Smart Notifications</h4>
+                <p>Get alerts via Discord and/or Telegram:</p>
+                <ul>
+                  <li><strong>Price Drops:</strong> When prices decrease</li>
+                  <li><strong>Back in Stock:</strong> When out-of-stock items return</li>
+                  <li><strong>Threshold Alerts:</strong> When your price targets are met</li>
+                </ul>
+              </div>
+              
+              <div class="help-item">
+                <h4><i class="fas fa-cogs"></i> Pro Tips</h4>
+                <ul>
+                  <li><strong>Labels:</strong> Use clear names like "Gaming Mouse" instead of model numbers</li>
+                  <li><strong>Groups:</strong> Organize with categories like "Electronics", "Books"</li>
+                  <li><strong>Multiple Items:</strong> Add the same product with different thresholds</li>
+                  <li><strong>Test Alerts:</strong> Use the test button to verify notifications work</li>
+                </ul>
+              </div>
+              
+              <div class="help-item">
+                <h4><i class="fas fa-shield-alt"></i> Rate Limiting</h4>
+                <p>Built-in protection against Amazon blocks:</p>
+                <ul>
+                  <li><strong>Scan Frequency:</strong> Checks every 10+ minutes by default</li>
+                  <li><strong>Delays:</strong> 60+ seconds between each item</li>
+                  <li><strong>Cooldowns:</strong> Automatic pauses if rate limited</li>
+                  <li><strong>User Agents:</strong> Rotates browser identities</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </details>
+      </div>
+    </div>
+    
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title"><i class="fas fa-list"></i> Tracked Products</h2>
+        <div class="btn-group">
+          <button id="btn_reload" class="btn btn-outline"><i class="fas fa-sync"></i> Refresh</button>
+          <button id="btn_scan" class="btn btn-success"><i class="fas fa-play"></i> Scan Now</button>
+        </div>
+      </div>
+      
+      <div id="items" class="loading">
+        <div class="spinner"></div> Loading products...
+      </div>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
