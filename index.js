@@ -813,7 +813,7 @@ async function checkOnce() {
 
       // Prepare data for both sources when warehouse tracking is enabled
       const modeWarehouseOnly = useWarehouse === 'only'
-      const modeWarehouseOff = !useWarehouse || useWarehouse === 'off'
+      const modeWarehouseOff = useWarehouse === false || useWarehouse === 'off'
       const hasWarehouse = !!info.warehouse
 
       // Main source data
