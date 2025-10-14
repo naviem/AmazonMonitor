@@ -811,95 +811,95 @@ async function checkOnce() {
         history: state[finalUrl]?.history || [],
       }
 
-      // Select comparison source based on per-item warehouse mode
+      // Prepare data for both sources when warehouse tracking is enabled
       const modeWarehouseOnly = useWarehouse === 'only'
+      const modeWarehouseOff = !useWarehouse || useWarehouse === 'off'
       const hasWarehouse = !!info.warehouse
-      let usingWh = false
-      let prevPrice = 0
-      let newPrice = 0
-      let prevAvail = false
-      let newAvail = false
 
-      if (modeWarehouseOnly) {
-        // Track ONLY the Warehouse offer; ignore main offer entirely
-        usingWh = true
-        prevPrice = prev?.warehouse?.lastPrice ?? 0
-        newPrice = hasWarehouse ? info.warehouse.lastPrice : 0
-        prevAvail = !!(prev?.warehouse?.available)
-        newAvail = !!(hasWarehouse && info.warehouse.available)
-      } else if (useWarehouse) {
-        // Prefer Warehouse when present; otherwise fall back to main
-        usingWh = hasWarehouse
-        if (usingWh) {
-          prevPrice = prev?.warehouse?.lastPrice ?? 0
-          newPrice = info.warehouse.lastPrice
-          prevAvail = !!(prev?.warehouse?.available)
-          newAvail = !!info.warehouse.available
-        } else {
-          prevPrice = prev?.lastPrice ?? 0
-          newPrice = info.lastPrice
-          prevAvail = !!(prev?.available)
-          newAvail = !!info.available
+      // Main source data
+      const mainPrevPrice = prev?.lastPrice ?? 0
+      const mainNewPrice = info.lastPrice ?? 0
+      const mainPrevAvail = !!(prev?.available)
+      const mainNewAvail = !!info.available
+
+      // Warehouse source data
+      const whPrevPrice = prev?.warehouse?.lastPrice ?? 0
+      const whNewPrice = hasWarehouse ? (info.warehouse.lastPrice ?? 0) : 0
+      const whPrevAvail = !!(prev?.warehouse?.available)
+      const whNewAvail = !!(hasWarehouse && info.warehouse.available)
+
+      // Determine which sources to check for alerts
+      const checkMain = !modeWarehouseOnly
+      const checkWarehouse = !modeWarehouseOff && hasWarehouse
+
+      // Helper function to check if price passes thresholds
+      const passesThresholds = (price, prevPrice) => {
+        const passesAbs = threshold ? (price > 0 && price <= threshold) : true
+        let passesDrop = true
+        const td = items[i].thresholdDrop
+        if (td && td > 0) {
+          let basePrice = prevPrice || price
+          const baseSel = (items[i].baseline || 'last')
+          if (baseSel === 'lowest' && state[finalUrl].lowestSeen?.price) basePrice = state[finalUrl].lowestSeen.price
+          if (baseSel === 'start' && Array.isArray(state[finalUrl].history) && state[finalUrl].history.length > 0) basePrice = state[finalUrl].history[0].price || basePrice
+          const target = basePrice * (1 - td / 100)
+          passesDrop = price > 0 && price <= target
         }
-      } else {
-        // Main-only
-        usingWh = false
-        prevPrice = prev?.lastPrice ?? 0
-        newPrice = info.lastPrice
-        prevAvail = !!(prev?.available)
-        newAvail = !!info.available
+        return passesAbs && passesDrop
       }
 
-      // Absolute threshold check
-      const passesAbs = threshold ? (newPrice > 0 && newPrice <= threshold) : true
-      // Percent-drop threshold check
-      let passesDrop = true
-      const td = items[i].thresholdDrop
-      if (td && td > 0) {
-        let basePrice = prevPrice || newPrice
-        const baseSel = (items[i].baseline || 'last')
-        if (baseSel === 'lowest' && state[finalUrl].lowestSeen?.price) basePrice = state[finalUrl].lowestSeen.price
-        if (baseSel === 'start' && Array.isArray(state[finalUrl].history) && state[finalUrl].history.length > 0) basePrice = state[finalUrl].history[0].price || basePrice
-        const target = basePrice * (1 - td / 100)
-        passesDrop = newPrice > 0 && newPrice <= target
-      }
-      const passesThreshold = passesAbs && passesDrop
-      const isBackInStock = prev && (prevAvail === false || prevAvail === 0 || prevAvail === undefined) && newAvail === true
-
-      const whOnly = useWarehouse === 'only'
-      // Clean, single-line status so users see why there may be no notifications yet
+      // Debug logging - show best available price
       if (config.debug) {
         const asin = extractAsin(finalUrl) || 'N/A'
         const alertsMode = (allowStockAlerts && allowPriceAlerts) ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
         const displayTitle = (label && label.trim().length > 0) ? label.trim() : (info.title || '').trim()
         const titleShort = displayTitle.length > 80 ? displayTitle.slice(0, 77) + '...' : (displayTitle || 'N/A')
-        const src = usingWh ? 'Warehouse' : 'Main'
-        const priceTxt = newPrice > 0 ? `${info.symbol}${newPrice.toFixed(2)}` : 'N/A'
-        const statusTxt = newAvail ? `${COLORS.green}IN STOCK${COLORS.reset}` : `${COLORS.red}OUT${COLORS.reset}`
+
+        // Show best price (warehouse if available and cheaper, otherwise main)
+        let src = 'Main'
+        let priceTxt = mainNewPrice > 0 ? `${info.symbol}${mainNewPrice.toFixed(2)}` : 'N/A'
+        let statusTxt = mainNewAvail ? `${COLORS.green}IN STOCK${COLORS.reset}` : `${COLORS.red}OUT${COLORS.reset}`
+        let bestPrice = mainNewPrice
+
+        if (hasWarehouse && whNewPrice > 0) {
+          if (!modeWarehouseOff) {
+            src = 'Warehouse'
+            priceTxt = `${info.symbol}${whNewPrice.toFixed(2)}`
+            statusTxt = whNewAvail ? `${COLORS.green}IN STOCK${COLORS.reset}` : `${COLORS.red}OUT${COLORS.reset}`
+            bestPrice = whNewPrice
+          }
+        }
+
+        const passesThreshold = passesThresholds(bestPrice, src === 'Warehouse' ? whPrevPrice : mainPrevPrice)
         const thrPart = (typeof threshold === 'number' && !isNaN(threshold))
           ? ` | threshold=${info.symbol}${threshold.toFixed(2)} ${passesThreshold ? '(met)' : '(not met)'}`
           : ''
         console.log(`${COLORS.magenta}[${new Date().toLocaleTimeString()}] [${i+1}/${items.length}] ${titleShort} (${asin}) — ${src} | ${priceTxt} | ${statusTxt}${thrPart} | alerts=${alertsMode}${COLORS.reset}`)
       }
-      // If source went unavailable, clear lastNotified so a future restock notifies again
-      if (notifyOnce && prev && prev.lastNotified && newAvail === false) {
-        state[finalUrl].lastNotified = null
-      }
-      // Build a notify signature to avoid duplicate alerts when notifyOnce=true
-      const sourceKey = usingWh ? 'warehouse' : 'main'
-      const signature = `${sourceKey}|avail:${newAvail ? 1 : 0}|price:${Math.round(newPrice * 100)}`
-      const lastSig = prev?.lastNotified
 
-      // Update history and lowestSeen
-      const chosenSource = usingWh ? 'warehouse' : 'main'
+      // Tracking for notifyOnce - separate for each source
+      const mainSig = `main|avail:${mainNewAvail ? 1 : 0}|price:${Math.round(mainNewPrice * 100)}`
+      const whSig = `warehouse|avail:${whNewAvail ? 1 : 0}|price:${Math.round(whNewPrice * 100)}`
+      const lastMainSig = prev?.lastNotifiedMain
+      const lastWhSig = prev?.lastNotifiedWarehouse
+
+      // Update history and lowestSeen - track best available price
       const nowTs = Date.now()
       if (HISTORY_ENABLED) {
-        const entry = { ts: nowTs, source: chosenSource, price: Number.isFinite(newPrice) ? Number(newPrice) : 0 }
         const hist = Array.isArray(state[finalUrl].history) ? state[finalUrl].history : []
         const lastEntry = hist.length > 0 ? hist[hist.length - 1] : null
-        // Only record when something meaningful changed (price or source flip)
+
+        // Determine which source to record (best available price)
+        let recordSource = 'main'
+        let recordPrice = mainNewPrice
+        if (checkWarehouse && whNewPrice > 0 && (whNewPrice < mainNewPrice || mainNewPrice === 0)) {
+          recordSource = 'warehouse'
+          recordPrice = whNewPrice
+        }
+
+        const entry = { ts: nowTs, source: recordSource, price: Number.isFinite(recordPrice) ? Number(recordPrice) : 0 }
         const changed = !lastEntry || Number(lastEntry.price||0) !== Number(entry.price||0) || String(lastEntry.source||'') !== String(entry.source||'')
-        // Outlier guard: require N consecutive scans for sudden changes
+
         let accept = changed
         if (changed && historyCfg.outlier_confirm_scans > 1 && lastEntry && Math.abs(Number(lastEntry.price||0) - Number(entry.price||0)) / Math.max(1, Number(lastEntry.price||1)) > 0.25) {
           const n = historyCfg.outlier_confirm_scans
@@ -908,7 +908,7 @@ async function checkOnce() {
           accept = consistent
         }
         if (accept) hist.push(entry)
-        // Compression: keep full recent window, thin older to daily buckets when too large
+
         const maxPoints = Number.isFinite(historyCfg.max_points) ? historyCfg.max_points : 2000
         if (hist.length > maxPoints) {
           const keepMs = (historyCfg.keep_full_days||7) * 86400000
@@ -936,62 +936,121 @@ async function checkOnce() {
           state[finalUrl].history = hist
         }
       } else {
-        // When disabled, drop history to keep files small
         state[finalUrl].history = []
       }
+
+      // Update lowestSeen for both sources
       const ls = state[finalUrl].lowestSeen
-      if (newPrice > 0 && (!ls || newPrice < ls.price || (ls.source !== chosenSource))) {
-        state[finalUrl].lowestSeen = { source: chosenSource, price: Number(newPrice), ts: nowTs }
+      if (checkMain && mainNewPrice > 0 && (!ls || mainNewPrice < ls.price)) {
+        state[finalUrl].lowestSeen = { source: 'main', price: Number(mainNewPrice), ts: nowTs }
+      }
+      if (checkWarehouse && whNewPrice > 0 && (!ls || whNewPrice < ls.price)) {
+        state[finalUrl].lowestSeen = { source: 'warehouse', price: Number(whNewPrice), ts: nowTs }
       }
 
-      if (allowStockAlerts && isBackInStock && passesThreshold) {
-        let desc = `Current Price: ${info.symbol}${newPrice.toFixed(2)}`
-        if (usingWh) {
-          const mainPrice = info?.lastPrice || 0
-          if (mainPrice > 0 && newPrice > 0 && newPrice < mainPrice) {
-            const diff = (mainPrice - newPrice).toFixed(2)
-            desc = `Warehouse Price: ${info.symbol}${newPrice.toFixed(2)}\nMain Price: ${info.symbol}${mainPrice.toFixed(2)}\nSavings vs Main: ${info.symbol}${diff}`
+      // Check MAIN source for alerts
+      if (checkMain) {
+        const mainPassesThreshold = passesThresholds(mainNewPrice, mainPrevPrice)
+        const mainIsBackInStock = prev && !mainPrevAvail && mainNewAvail
+
+        // Stock alert for main
+        if (allowStockAlerts && mainIsBackInStock && mainPassesThreshold) {
+          if (!notifyOnce || mainSig !== lastMainSig) {
+            const embed = {
+              title: `Back in stock for "${info.title || 'N/A'}"`,
+              description: `Current Price: ${info.symbol}${mainNewPrice.toFixed(2)}\n\n${finalUrl}`,
+              thumbnail: info.image ? { url: info.image } : undefined,
+              color: 0x0099ff,
+            }
+            await postWebhook(embed)
+            const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>`
+            await postTelegram(telegramMessage, info.image)
+            sent++
+            state[finalUrl].lastNotifiedMain = mainSig
           }
         }
-        const titleLine = label ? `${label}` : `${info.title || 'N/A'}`
-        if (!notifyOnce || signature !== lastSig) {
-          const embed = {
-            title: `Back in stock for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
-            description: `${desc}\n\n${finalUrl}`,
-            thumbnail: info.image ? { url: info.image } : undefined,
-            color: 0x0099ff,
+        // Price alert for main
+        else if (allowPriceAlerts && mainNewPrice > 0 && mainPassesThreshold && (!prev || mainPrevPrice === 0 || (mainPrevPrice > 0 && mainNewPrice < mainPrevPrice))) {
+          if (!notifyOnce || mainSig !== lastMainSig) {
+            const isFirstDetection = !prev || mainPrevPrice === 0
+            const diff = isFirstDetection ? '0.00' : (mainPrevPrice - mainNewPrice).toFixed(2)
+            const embed = {
+              title: `Price alert for "${info.title || 'N/A'}"`,
+              description: isFirstDetection
+                ? `Current Price: ${info.symbol}${mainNewPrice.toFixed(2)}\n\n${finalUrl}`
+                : `Old Price: ${info.symbol}${mainPrevPrice.toFixed(2)}\nNew Price: ${info.symbol}${mainNewPrice.toFixed(2)}\nDiff: ${info.symbol}${diff}\n\n${finalUrl}`,
+              thumbnail: info.image ? { url: info.image } : undefined,
+              color: 0x00ff00,
+            }
+            await postWebhook(embed)
+            const telegramMessage = isFirstDetection
+              ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💸 <b>Current Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>`
+              : (() => {
+                  const discount = ((mainPrevPrice - mainNewPrice) / mainPrevPrice * 100).toFixed(1)
+                  return `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Old Price:</b> ${info.symbol}${mainPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>`
+                })()
+            await postTelegram(telegramMessage, info.image)
+            sent++
+            state[finalUrl].lastNotifiedMain = mainSig
           }
-          await postWebhook(embed)
-          
-          // Also send to Telegram
-          const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b>${usingWh ? ' (Amazon Warehouse)' : ''}\n\n💰 <b>Price:</b> ${info.symbol}${newPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>`
-          await postTelegram(telegramMessage, info.image)
-          
-          sent++
-          state[finalUrl].lastNotified = signature
         }
-      } else if (allowPriceAlerts && prev && newPrice > 0 && prevPrice > 0 && newPrice < prevPrice && passesThreshold) {
-        const diff = (prev.lastPrice - info.lastPrice).toFixed(2)
-        if (!notifyOnce || signature !== lastSig) {
-          const embed = {
-            title: `Price alert for "${info.title || 'N/A'}"${usingWh ? ' (Amazon Warehouse)' : ''}`,
-            description: `Old Price: ${prev.symbol}${prevPrice.toFixed(2)}\nNew Price: ${info.symbol}${newPrice.toFixed(2)}\nDiff: ${info.symbol}${(prevPrice - newPrice).toFixed(2)}\n\n${finalUrl}`,
-            thumbnail: info.image ? { url: info.image } : undefined,
-            color: 0x00ff00,
+      }
+
+      // Check WAREHOUSE source for alerts
+      if (checkWarehouse) {
+        const whPassesThreshold = passesThresholds(whNewPrice, whPrevPrice)
+        const whIsBackInStock = prev && !whPrevAvail && whNewAvail
+
+        // Stock alert for warehouse
+        if (allowStockAlerts && whIsBackInStock && whPassesThreshold) {
+          if (!notifyOnce || whSig !== lastWhSig) {
+            let desc = `Warehouse Price: ${info.symbol}${whNewPrice.toFixed(2)}`
+            if (mainNewPrice > 0 && whNewPrice < mainNewPrice) {
+              const diff = (mainNewPrice - whNewPrice).toFixed(2)
+              desc = `Warehouse Price: ${info.symbol}${whNewPrice.toFixed(2)}\nMain Price: ${info.symbol}${mainNewPrice.toFixed(2)}\nSavings vs Main: ${info.symbol}${diff}`
+            }
+            const embed = {
+              title: `Back in stock for "${info.title || 'N/A'}" (Amazon Warehouse)`,
+              description: `${desc}\n\n${finalUrl}`,
+              thumbnail: info.image ? { url: info.image } : undefined,
+              color: 0x0099ff,
+            }
+            await postWebhook(embed)
+            const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>`
+            await postTelegram(telegramMessage, info.image)
+            sent++
+            state[finalUrl].lastNotifiedWarehouse = whSig
           }
-          await postWebhook(embed)
-          
-          // Also send to Telegram
-          const discount = ((prevPrice - newPrice) / prevPrice * 100).toFixed(1)
-          const telegramMessage = `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b>${usingWh ? ' (Amazon Warehouse)' : ''}\n\n💰 <b>Old Price:</b> ${prev.symbol}${prevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${newPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${(prevPrice - newPrice).toFixed(2)} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>`
-          await postTelegram(telegramMessage, info.image)
-          
-          sent++
-          state[finalUrl].lastNotified = signature
         }
-      } else if (prev && threshold && !(newPrice <= threshold) && config.debug) {
-        dbg(`No alert due to threshold: current=${newPrice.toFixed(2)} > threshold=${threshold.toFixed(2)}`)
-      } else if (config.debug && !allowPriceAlerts && !allowStockAlerts) {
+        // Price alert for warehouse
+        else if (allowPriceAlerts && whNewPrice > 0 && whPassesThreshold && (!prev || whPrevPrice === 0 || (whPrevPrice > 0 && whNewPrice < whPrevPrice))) {
+          if (!notifyOnce || whSig !== lastWhSig) {
+            const isFirstDetection = !prev || whPrevPrice === 0
+            const diff = isFirstDetection ? '0.00' : (whPrevPrice - whNewPrice).toFixed(2)
+            const embed = {
+              title: `Price alert for "${info.title || 'N/A'}" (Amazon Warehouse)`,
+              description: isFirstDetection
+                ? `Current Price: ${info.symbol}${whNewPrice.toFixed(2)}\n\n${finalUrl}`
+                : `Old Price: ${info.symbol}${whPrevPrice.toFixed(2)}\nNew Price: ${info.symbol}${whNewPrice.toFixed(2)}\nDiff: ${info.symbol}${diff}\n\n${finalUrl}`,
+              thumbnail: info.image ? { url: info.image } : undefined,
+              color: 0x00ff00,
+            }
+            await postWebhook(embed)
+            const telegramMessage = isFirstDetection
+              ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💸 <b>Current Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>`
+              : (() => {
+                  const discount = ((whPrevPrice - whNewPrice) / whPrevPrice * 100).toFixed(1)
+                  return `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Old Price:</b> ${info.symbol}${whPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>`
+                })()
+            await postTelegram(telegramMessage, info.image)
+            sent++
+            state[finalUrl].lastNotifiedWarehouse = whSig
+          }
+        }
+      }
+
+      // Debug logging for threshold failures
+      if (config.debug && threshold && !allowPriceAlerts && !allowStockAlerts) {
         dbg('All alerts disabled for this item (alerts=none)')
       }
     } catch (e) {
