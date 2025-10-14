@@ -948,6 +948,10 @@ async function checkOnce() {
         state[finalUrl].lowestSeen = { source: 'warehouse', price: Number(whNewPrice), ts: nowTs }
       }
 
+      // Build offer listing URL
+      const asin = extractAsin(finalUrl)
+      const offerListingUrl = asin ? `https://www.amazon.${config.tld}/gp/offer-listing/${asin}/ref=dp_olp_new?ie=UTF8&condition=new` : null
+
       // Check MAIN source for alerts
       if (checkMain) {
         const mainPassesThreshold = passesThresholds(mainNewPrice, mainPrevPrice)
@@ -956,14 +960,16 @@ async function checkOnce() {
         // Stock alert for main
         if (allowStockAlerts && mainIsBackInStock && mainPassesThreshold) {
           if (!notifyOnce || mainSig !== lastMainSig) {
+            const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
             const embed = {
               title: `Back in stock for "${info.title || 'N/A'}"`,
-              description: `Current Price: ${info.symbol}${mainNewPrice.toFixed(2)}\n\n${finalUrl}`,
+              description: `Current Price: ${info.symbol}${mainNewPrice.toFixed(2)}\n\n[View Product](${finalUrl})${offerLink}`,
               thumbnail: info.image ? { url: info.image } : undefined,
               color: 0x0099ff,
             }
             await postWebhook(embed)
-            const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>`
+            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
+            const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>${offerLinkTg}`
             await postTelegram(telegramMessage, info.image)
             sent++
             state[finalUrl].lastNotifiedMain = mainSig
@@ -974,20 +980,22 @@ async function checkOnce() {
           if (!notifyOnce || mainSig !== lastMainSig) {
             const isFirstDetection = !prev || mainPrevPrice === 0
             const diff = isFirstDetection ? '0.00' : (mainPrevPrice - mainNewPrice).toFixed(2)
+            const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
             const embed = {
               title: `Price alert for "${info.title || 'N/A'}"`,
               description: isFirstDetection
-                ? `Current Price: ${info.symbol}${mainNewPrice.toFixed(2)}\n\n${finalUrl}`
-                : `Old Price: ${info.symbol}${mainPrevPrice.toFixed(2)}\nNew Price: ${info.symbol}${mainNewPrice.toFixed(2)}\nDiff: ${info.symbol}${diff}\n\n${finalUrl}`,
+                ? `Current Price: ${info.symbol}${mainNewPrice.toFixed(2)}\n\n[View Product](${finalUrl})${offerLink}`
+                : `Old Price: ${info.symbol}${mainPrevPrice.toFixed(2)}\nNew Price: ${info.symbol}${mainNewPrice.toFixed(2)}\nDiff: ${info.symbol}${diff}\n\n[View Product](${finalUrl})${offerLink}`,
               thumbnail: info.image ? { url: info.image } : undefined,
               color: 0x00ff00,
             }
             await postWebhook(embed)
+            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
             const telegramMessage = isFirstDetection
-              ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💸 <b>Current Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>`
+              ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💸 <b>Current Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
               : (() => {
                   const discount = ((mainPrevPrice - mainNewPrice) / mainPrevPrice * 100).toFixed(1)
-                  return `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Old Price:</b> ${info.symbol}${mainPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>`
+                  return `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Old Price:</b> ${info.symbol}${mainPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
                 })()
             await postTelegram(telegramMessage, info.image)
             sent++
@@ -1009,14 +1017,16 @@ async function checkOnce() {
               const diff = (mainNewPrice - whNewPrice).toFixed(2)
               desc = `Warehouse Price: ${info.symbol}${whNewPrice.toFixed(2)}\nMain Price: ${info.symbol}${mainNewPrice.toFixed(2)}\nSavings vs Main: ${info.symbol}${diff}`
             }
+            const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
             const embed = {
               title: `Back in stock for "${info.title || 'N/A'}" (Amazon Warehouse)`,
-              description: `${desc}\n\n${finalUrl}`,
+              description: `${desc}\n\n[View Product](${finalUrl})${offerLink}`,
               thumbnail: info.image ? { url: info.image } : undefined,
               color: 0x0099ff,
             }
             await postWebhook(embed)
-            const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>`
+            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
+            const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>${offerLinkTg}`
             await postTelegram(telegramMessage, info.image)
             sent++
             state[finalUrl].lastNotifiedWarehouse = whSig
@@ -1027,20 +1037,22 @@ async function checkOnce() {
           if (!notifyOnce || whSig !== lastWhSig) {
             const isFirstDetection = !prev || whPrevPrice === 0
             const diff = isFirstDetection ? '0.00' : (whPrevPrice - whNewPrice).toFixed(2)
+            const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
             const embed = {
               title: `Price alert for "${info.title || 'N/A'}" (Amazon Warehouse)`,
               description: isFirstDetection
-                ? `Current Price: ${info.symbol}${whNewPrice.toFixed(2)}\n\n${finalUrl}`
-                : `Old Price: ${info.symbol}${whPrevPrice.toFixed(2)}\nNew Price: ${info.symbol}${whNewPrice.toFixed(2)}\nDiff: ${info.symbol}${diff}\n\n${finalUrl}`,
+                ? `Current Price: ${info.symbol}${whNewPrice.toFixed(2)}\n\n[View Product](${finalUrl})${offerLink}`
+                : `Old Price: ${info.symbol}${whPrevPrice.toFixed(2)}\nNew Price: ${info.symbol}${whNewPrice.toFixed(2)}\nDiff: ${info.symbol}${diff}\n\n[View Product](${finalUrl})${offerLink}`,
               thumbnail: info.image ? { url: info.image } : undefined,
               color: 0x00ff00,
             }
             await postWebhook(embed)
+            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
             const telegramMessage = isFirstDetection
-              ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💸 <b>Current Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>`
+              ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💸 <b>Current Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
               : (() => {
                   const discount = ((whPrevPrice - whNewPrice) / whPrevPrice * 100).toFixed(1)
-                  return `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Old Price:</b> ${info.symbol}${whPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>`
+                  return `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Old Price:</b> ${info.symbol}${whPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
                 })()
             await postTelegram(telegramMessage, info.image)
             sent++
