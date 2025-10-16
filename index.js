@@ -948,9 +948,9 @@ async function checkOnce() {
         state[finalUrl].lowestSeen = { source: 'warehouse', price: Number(whNewPrice), ts: nowTs }
       }
 
-      // Build offer listing URL
+      // Build offer listing URL (aod=1 opens All Offers Display on mobile & desktop)
       const asin = extractAsin(finalUrl)
-      const offerListingUrl = asin ? `https://www.amazon.${config.tld}/gp/offer-listing/${asin}/ref=dp_olp_new?ie=UTF8&condition=new` : null
+      const offerListingUrl = asin ? `https://www.amazon.${config.tld}/dp/${asin}?aod=1&psc=1` : null
 
       // Check MAIN source for alerts
       if (checkMain) {
