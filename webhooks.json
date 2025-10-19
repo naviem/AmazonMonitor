@@ -1,0 +1,11 @@
+{
+  "webhooks": [
+    {
+      "id": "default",
+      "name": "Default Webhook",
+      "url": "ENTER_WEBHOOK_HERE",
+      "isDefault": true
+    }
+  ],
+  "nextId": 1
+}

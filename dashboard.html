@@ -580,6 +580,165 @@
       opacity: 1;
       visibility: visible;
     }
+
+    /* Tab Navigation */
+    .tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid var(--border);
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+
+    .tab {
+      padding: 0.75rem 1.5rem;
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .tab:hover {
+      color: var(--text-primary);
+      background: var(--bg-tertiary);
+    }
+
+    .tab.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* Webhook Card */
+    .webhook-card {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .webhook-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .webhook-name {
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+      color: var(--text-primary);
+    }
+
+    .webhook-url {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      font-family: monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .webhook-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    /* Donation Banner */
+    .donation-banner {
+      background: linear-gradient(135deg, rgba(0, 122, 204, 0.15) 0%, rgba(78, 201, 176, 0.15) 100%);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1rem 1.5rem;
+      margin-bottom: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .donation-content {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      flex: 1;
+    }
+
+    .donation-icon {
+      font-size: 2rem;
+      color: var(--success);
+    }
+
+    .donation-text {
+      flex: 1;
+    }
+
+    .donation-text h3 {
+      margin: 0 0 0.25rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .donation-text p {
+      margin: 0;
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+    }
+
+    .donation-button {
+      background: linear-gradient(135deg, #0070ba 0%, #1f8ceb 100%);
+      color: #ffffff;
+      padding: 0.625rem 1.5rem;
+      border-radius: 3px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.875rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.2s;
+      border: none;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .donation-button:hover {
+      background: linear-gradient(135deg, #005ea6 0%, #1a7cd7 100%);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    @media (max-width: 768px) {
+      .donation-banner {
+        flex-direction: column;
+        text-align: center;
+      }
+
+      .donation-content {
+        flex-direction: column;
+      }
+    }
   </style>
 </head>
 <body>
@@ -587,7 +746,23 @@
     <div class="header">
       <h1><i class="fas fa-shopping-cart"></i> Amazon Monitor Dashboard</h1>
     </div>
-    
+
+    <!-- Donation Banner -->
+    <div class="donation-banner">
+      <div class="donation-content">
+        <div class="donation-icon">
+          <i class="fas fa-heart"></i>
+        </div>
+        <div class="donation-text">
+          <h3>Support the Project</h3>
+          <p>If you find this tool useful, consider supporting its development!</p>
+        </div>
+      </div>
+      <a href="https://www.paypal.com/donate/?hosted_button_id=T8DEQ4E4CU95N" target="_blank" class="donation-button">
+        <i class="fab fa-paypal"></i> Donate via PayPal
+      </a>
+    </div>
+
     <div class="status-bar" id="statusBar">
       <div class="status-card">
         <div class="status-value" id="totalItems">-</div>
@@ -606,8 +781,23 @@
         <div class="status-label">System Status</div>
       </div>
     </div>
-    
-    <div class="card search-section">
+
+    <!-- Tab Navigation -->
+    <div class="tabs">
+      <button class="tab active" data-tab="products">
+        <i class="fas fa-list"></i> Products
+      </button>
+      <button class="tab" data-tab="webhooks">
+        <i class="fas fa-bell"></i> Webhooks
+      </button>
+      <button class="tab" data-tab="settings">
+        <i class="fas fa-cog"></i> Settings
+      </button>
+    </div>
+
+    <!-- Products Tab -->
+    <div id="tab-products" class="tab-content active">
+      <div class="card search-section">
       <div class="card-header">
         <h2 class="card-title"><i class="fas fa-search"></i> Search & Add Products</h2>
       </div>
@@ -657,10 +847,9 @@
         
         <div class="form-group">
           <div>
-            <label>Amazon Warehouse <span class="tooltip" data-tooltip="Warehouse deals are discounted returns/open-box items. On=prefer warehouse deals, Off=ignore warehouse, Only=warehouse deals only"><i class="fas fa-info-circle"></i></span></label>
+            <label>Amazon Warehouse <span class="tooltip" data-tooltip="Warehouse deals are discounted returns/open-box items. Include=monitor both regular & warehouse prices, Exclude=ignore warehouse deals, Only=warehouse deals exclusively"><i class="fas fa-info-circle"></i></span></label>
             <select id="f_warehouse" class="form-control">
-              <option value="">Use Global Setting</option>
-              <option value="on">Include Warehouse Deals</option>
+              <option value="on" selected>Include Warehouse Deals</option>
               <option value="off">Exclude Warehouse Deals</option>
               <option value="only">Warehouse Deals Only</option>
             </select>
@@ -674,7 +863,32 @@
               <option value="none">No Alerts</option>
             </select>
           </div>
-          <div style="display: flex; align-items: end;">
+          <div>
+            <label>Notification Mode <span class="tooltip" data-tooltip="Normal: Alert once per price drop or stock change. Repeat Alerts: Send alerts on EVERY scan while item stays in stock below threshold"><i class="fas fa-info-circle"></i></span></label>
+            <div style="display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.5rem;">
+              <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; margin: 0;">
+                <input type="radio" name="notify_mode" value="normal" id="f_notify_normal" checked style="width: auto;">
+                <span>Normal (Alert on Changes)</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; margin: 0;">
+                <input type="radio" name="notify_mode" value="repeat" id="f_repeat_alerts" style="width: auto;">
+                <span>Repeat Alerts (Continuous)</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div>
+            <label>Discord Webhook <span class="tooltip" data-tooltip="Choose which Discord webhook will receive alerts for this product. Manage webhooks in the Webhooks tab."><i class="fas fa-info-circle"></i></span></label>
+            <select id="f_webhook" class="form-control">
+              <option value="">Default Webhook</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group" style="grid-template-columns: 1fr;">
+          <div style="display: flex; justify-content: flex-end;">
             <button type="submit" class="btn btn-primary"><i class="fas fa-plus"></i> Add Product</button>
           </div>
         </div>
@@ -769,6 +983,128 @@
         <div class="spinner"></div> Loading products...
       </div>
     </div>
+    </div>
+    <!-- End Products Tab -->
+
+    <!-- Webhooks Tab -->
+    <div id="tab-webhooks" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><i class="fas fa-bell"></i> Manage Webhooks</h2>
+          <button id="btn_add_webhook" class="btn btn-primary"><i class="fas fa-plus"></i> Add Webhook</button>
+        </div>
+
+        <div id="webhooks_list" class="loading">
+          <div class="spinner"></div> Loading webhooks...
+        </div>
+
+        <!-- Add Webhook Form (hidden by default) -->
+        <div id="webhook_form" style="display: none; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+          <h3 style="margin-bottom: 1rem; font-size: 1rem;">Add New Webhook</h3>
+          <form id="addWebhookForm">
+            <div class="form-group">
+              <div>
+                <label>Webhook Name *</label>
+                <input type="text" id="wh_name" class="form-control" placeholder="e.g., Main Alerts, Deals Channel" required>
+              </div>
+              <div>
+                <label>Discord Webhook URL *</label>
+                <input type="url" id="wh_url" class="form-control" placeholder="https://discord.com/api/webhooks/..." required>
+              </div>
+            </div>
+            <div class="form-group" style="grid-template-columns: 1fr;">
+              <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button type="button" id="btn_cancel_webhook" class="btn btn-outline">Cancel</button>
+                <button type="submit" class="btn btn-success"><i class="fas fa-save"></i> Save Webhook</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+    <!-- End Webhooks Tab -->
+
+    <!-- Settings Tab -->
+    <div id="tab-settings" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title"><i class="fas fa-cog"></i> Monitor Settings</h2>
+          <button id="btn_save_settings" class="btn btn-success"><i class="fas fa-save"></i> Save Settings</button>
+        </div>
+
+        <div id="settings_content" class="loading">
+          <div class="spinner"></div> Loading settings...
+        </div>
+
+        <form id="settingsForm" style="display: none;">
+          <h3 style="margin-bottom: 1rem; font-size: 1rem; color: var(--text-primary);">Scan Configuration</h3>
+          <div class="form-group">
+            <div>
+              <label>Scan Interval (minutes) <span class="tooltip" data-tooltip="How often to check all products. Minimum: 10 minutes"><i class="fas fa-info-circle"></i></span></label>
+              <input type="number" id="s_minutes" class="form-control" min="10" step="1" required>
+            </div>
+            <div>
+              <label>Delay Between Items (seconds) <span class="tooltip" data-tooltip="Wait time between checking each product. Minimum: 60 seconds"><i class="fas fa-info-circle"></i></span></label>
+              <input type="number" id="s_seconds" class="form-control" min="60" step="1" required>
+            </div>
+            <div>
+              <label>Amazon TLD <span class="tooltip" data-tooltip="Which Amazon site to monitor (ca, com, co.uk, de, etc.)"><i class="fas fa-info-circle"></i></span></label>
+              <input type="text" id="s_tld" class="form-control" placeholder="e.g., ca, com, co.uk" required>
+            </div>
+          </div>
+
+          <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--text-primary);">Telegram Settings (Optional)</h3>
+          <div class="form-group">
+            <div>
+              <label>Telegram Bot Token</label>
+              <input type="text" id="s_telegram_token" class="form-control" placeholder="Bot token from @BotFather">
+            </div>
+            <div>
+              <label>Telegram Chat ID</label>
+              <input type="text" id="s_telegram_chat" class="form-control" placeholder="Your chat ID">
+            </div>
+          </div>
+
+          <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--text-primary);">Price History</h3>
+          <div class="form-group">
+            <div>
+              <label>Keep Full History (days) <span class="tooltip" data-tooltip="Number of days to keep detailed price history"><i class="fas fa-info-circle"></i></span></label>
+              <input type="number" id="s_history_days" class="form-control" min="1" step="1">
+            </div>
+            <div>
+              <label>History Limit (max entries) <span class="tooltip" data-tooltip="Maximum number of price changes to store per product"><i class="fas fa-info-circle"></i></span></label>
+              <input type="number" id="s_history_limit" class="form-control" min="10" step="10">
+            </div>
+            <div style="display: flex; align-items: center; padding-top: 2rem;">
+              <label style="display: flex; align-items: center; gap: 0.5rem; margin: 0;">
+                <input type="checkbox" id="s_history_noise" style="width: auto;">
+                <span>Enable Noise Protection</span>
+              </label>
+            </div>
+          </div>
+
+          <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--text-primary);">Advanced</h3>
+          <div class="form-group">
+            <div>
+              <label>User Agent Strategy</label>
+              <select id="s_ua_strategy" class="form-control">
+                <option value="stable-per-run">Stable Per Run</option>
+                <option value="sticky-per-item">Sticky Per Item (Recommended)</option>
+                <option value="rotate-per-request">Rotate Per Request</option>
+              </select>
+            </div>
+            <div style="display: flex; align-items: center; padding-top: 2rem;">
+              <label style="display: flex; align-items: center; gap: 0.5rem; margin: 0;">
+                <input type="checkbox" id="s_debug" style="width: auto;">
+                <span>Enable Debug Logging</span>
+              </label>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+    <!-- End Settings Tab -->
+
   </div>
 
   <script src="dashboard.js"></script>

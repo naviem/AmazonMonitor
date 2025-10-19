@@ -580,6 +580,8 @@ function readUrlsFile() {
     let labelToken = null
     let notifyOnceToken = null
     let groupToken = null
+    let repeatAlertsToken = null
+    let webhookIdToken = null
     for (let i = 1; i < parts.length; i++) {
       const token = parts[i]
       if (!token) continue
@@ -617,6 +619,10 @@ function readUrlsFile() {
         notifyOnceToken = val
       } else if (key === 'group') {
         groupToken = val
+      } else if (key === 'repeat_alerts' || key === 'repeat') {
+        repeatAlertsToken = val
+      } else if (key === 'webhook' || key === 'webhook_id') {
+        webhookIdToken = val
       }
     }
     const label = labelToken ? labelToken.replace(/^"|"$/g, '') : null
@@ -625,7 +631,12 @@ function readUrlsFile() {
       : ['repeat', 'off', 'false', '0', 'no', 'n'].includes(nv) ? false
       : false
     const group = groupToken ? groupToken.replace(/^"|"$/g, '') : null
-    entries.push({ value, threshold: threshold ?? null, thresholdDrop: thresholdDrop ?? null, baseline: baseline || null, useWarehouse, allowStockAlerts, allowPriceAlerts, label, group, notifyOnce })
+    const rv = (repeatAlertsToken || '').toLowerCase()
+    const repeatAlerts = ['on', 'true', '1', 'yes', 'y'].includes(rv) ? true
+      : ['off', 'false', '0', 'no', 'n'].includes(rv) ? false
+      : false
+    const webhookId = webhookIdToken ? String(webhookIdToken).replace(/^"|"$/g, '') : null
+    entries.push({ value, threshold: threshold ?? null, thresholdDrop: thresholdDrop ?? null, baseline: baseline || null, useWarehouse, allowStockAlerts, allowPriceAlerts, label, group, notifyOnce, repeatAlerts, webhookId })
   }
   return entries
 }
@@ -641,6 +652,30 @@ function loadWatch() {
 
 function saveWatch(obj) {
   const p = new URL('./watch.json', import.meta.url)
+  fs.writeFileSync(p, JSON.stringify(obj, null, 2))
+}
+
+function loadWebhooks() {
+  const p = new URL('./webhooks.json', import.meta.url)
+  if (!fs.existsSync(p)) {
+    // Initialize with default webhook from config if present
+    const initial = { webhooks: [], nextId: 1 }
+    if (config.webhook_url) {
+      initial.webhooks.push({
+        id: 'default',
+        name: 'Default Webhook',
+        url: config.webhook_url,
+        isDefault: true
+      })
+    }
+    fs.writeFileSync(p, JSON.stringify(initial, null, 2))
+    return initial
+  }
+  return JSON.parse(fs.readFileSync(p).toString())
+}
+
+function saveWebhooks(obj) {
+  const p = new URL('./webhooks.json', import.meta.url)
   fs.writeFileSync(p, JSON.stringify(obj, null, 2))
 }
 
@@ -762,6 +797,7 @@ async function checkOnce() {
     label: e.label || null,
     group: e.group || null,
     notifyOnce: !!e.notifyOnce,
+    repeatAlerts: !!e.repeatAlerts,
   }))
   if (items.length === 0) {
     log('Scan skipped: no URLs found in urls.txt')
@@ -774,7 +810,7 @@ async function checkOnce() {
   let errors = 0
 
   for (let i = 0; i < items.length; i++) {
-    const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce } = items[i]
+    const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce, repeatAlerts } = items[i]
     try {
       const page = await fetchPage(finalUrl)
       const $ = page && page.$
@@ -807,6 +843,7 @@ async function checkOnce() {
         label: label || null,
         group: items[i].group || null,
         notifyOnce: !!notifyOnce,
+        repeatAlerts: !!repeatAlerts,
         lowestSeen: state[finalUrl]?.lowestSeen || null,
         history: state[finalUrl]?.history || [],
       }
@@ -959,7 +996,7 @@ async function checkOnce() {
 
         // Stock alert for main
         if (allowStockAlerts && mainIsBackInStock && mainPassesThreshold) {
-          if (!notifyOnce || mainSig !== lastMainSig) {
+          if (!notifyOnce || mainSig !== lastMainSig || (repeatAlerts && mainNewAvail && mainPassesThreshold)) {
             const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
             const embed = {
               title: `Back in stock for "${info.title || 'N/A'}"`,
@@ -977,7 +1014,7 @@ async function checkOnce() {
         }
         // Price alert for main
         else if (allowPriceAlerts && mainNewPrice > 0 && mainPassesThreshold && (!prev || mainPrevPrice === 0 || (mainPrevPrice > 0 && mainNewPrice < mainPrevPrice))) {
-          if (!notifyOnce || mainSig !== lastMainSig) {
+          if (!notifyOnce || mainSig !== lastMainSig || (repeatAlerts && mainNewAvail && mainPassesThreshold)) {
             const isFirstDetection = !prev || mainPrevPrice === 0
             const diff = isFirstDetection ? '0.00' : (mainPrevPrice - mainNewPrice).toFixed(2)
             const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
@@ -1011,7 +1048,7 @@ async function checkOnce() {
 
         // Stock alert for warehouse
         if (allowStockAlerts && whIsBackInStock && whPassesThreshold) {
-          if (!notifyOnce || whSig !== lastWhSig) {
+          if (!notifyOnce || whSig !== lastWhSig || (repeatAlerts && whNewAvail && whPassesThreshold)) {
             let desc = `Warehouse Price: ${info.symbol}${whNewPrice.toFixed(2)}`
             if (mainNewPrice > 0 && whNewPrice < mainNewPrice) {
               const diff = (mainNewPrice - whNewPrice).toFixed(2)
@@ -1034,7 +1071,7 @@ async function checkOnce() {
         }
         // Price alert for warehouse
         else if (allowPriceAlerts && whNewPrice > 0 && whPassesThreshold && (!prev || whPrevPrice === 0 || (whPrevPrice > 0 && whNewPrice < whPrevPrice))) {
-          if (!notifyOnce || whSig !== lastWhSig) {
+          if (!notifyOnce || whSig !== lastWhSig || (repeatAlerts && whNewAvail && whPassesThreshold)) {
             const isFirstDetection = !prev || whPrevPrice === 0
             const diff = isFirstDetection ? '0.00' : (whPrevPrice - whNewPrice).toFixed(2)
             const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
@@ -1135,6 +1172,161 @@ async function main() {
           coolingMs,
           tld: config.tld || 'com',
         }))
+        return
+      }
+      // Webhooks API
+      if (url.pathname === '/api/webhooks' && req.method === 'GET') {
+        try {
+          const data = loadWebhooks()
+          res.end(JSON.stringify({ webhooks: data.webhooks || [] }))
+        } catch (e) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Failed to load webhooks' }))
+        }
+        return
+      }
+      if (url.pathname === '/api/webhooks' && req.method === 'POST') {
+        let body = ''
+        req.on('data', c => { body += c })
+        req.on('end', () => {
+          try {
+            const { name, url: webhookUrl } = JSON.parse(body || '{}')
+            if (!name || !webhookUrl) {
+              res.statusCode = 400
+              return res.end(JSON.stringify({ error: 'name and url are required' }))
+            }
+            const data = loadWebhooks()
+            const newId = String(data.nextId || 1)
+            const isFirstWebhook = data.webhooks.length === 0
+            data.webhooks.push({
+              id: newId,
+              name: String(name),
+              url: String(webhookUrl),
+              isDefault: isFirstWebhook
+            })
+            data.nextId = (data.nextId || 1) + 1
+            saveWebhooks(data)
+            res.end(JSON.stringify({ ok: true, id: newId }))
+          } catch (e) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ error: 'Invalid request' }))
+          }
+        })
+        return
+      }
+      if (url.pathname.startsWith('/api/webhooks/') && url.pathname.endsWith('/default') && req.method === 'PUT') {
+        try {
+          const id = url.pathname.split('/')[3]
+          const data = loadWebhooks()
+          const found = data.webhooks.find(w => w.id === id)
+          if (!found) {
+            res.statusCode = 404
+            return res.end(JSON.stringify({ error: 'Webhook not found' }))
+          }
+          data.webhooks.forEach(w => { w.isDefault = false })
+          found.isDefault = true
+          saveWebhooks(data)
+          res.end(JSON.stringify({ ok: true }))
+        } catch (e) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Failed to set default' }))
+        }
+        return
+      }
+      if (url.pathname.startsWith('/api/webhooks/') && req.method === 'DELETE') {
+        try {
+          const id = url.pathname.split('/')[3]
+          const data = loadWebhooks()
+          const index = data.webhooks.findIndex(w => w.id === id)
+          if (index === -1) {
+            res.statusCode = 404
+            return res.end(JSON.stringify({ error: 'Webhook not found' }))
+          }
+          const wasDefault = data.webhooks[index].isDefault
+          data.webhooks.splice(index, 1)
+          // If deleted webhook was default, make first remaining webhook default
+          if (wasDefault && data.webhooks.length > 0) {
+            data.webhooks[0].isDefault = true
+          }
+          saveWebhooks(data)
+          res.end(JSON.stringify({ ok: true }))
+        } catch (e) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Failed to delete webhook' }))
+        }
+        return
+      }
+      // Settings API
+      if (url.pathname === '/api/settings' && req.method === 'GET') {
+        try {
+          res.end(JSON.stringify({
+            minutes_per_check: minutesPerCheck,
+            seconds_between_check: secondsBetweenCheck,
+            tld: config.tld || 'com',
+            telegram_bot_token: config.telegram_bot_token || '',
+            telegram_chat_id: config.telegram_chat_id || '',
+            history_enabled: HISTORY_ENABLED,
+            history_days: historyCfg.keep_full_days,
+            history_limit: historyCfg.max_points,
+            history_noise_protection: historyCfg.outlier_confirm_scans > 1,
+            user_agent_strategy: UA_STRATEGY,
+            debug: !!config.debug
+          }))
+        } catch (e) {
+          res.statusCode = 500
+          res.end(JSON.stringify({ error: 'Failed to load settings' }))
+        }
+        return
+      }
+      if (url.pathname === '/api/settings' && req.method === 'PUT') {
+        let body = ''
+        req.on('data', c => { body += c })
+        req.on('end', () => {
+          try {
+            const updates = JSON.parse(body || '{}')
+            const configPath = new URL('./config.json', import.meta.url)
+            const currentConfig = readConfig(configPath)
+
+            // Update allowed fields
+            if (typeof updates.minutes_per_check === 'number' && updates.minutes_per_check >= 10) {
+              currentConfig.minutes_per_check = updates.minutes_per_check
+            }
+            if (typeof updates.seconds_between_check === 'number' && updates.seconds_between_check >= 60) {
+              currentConfig.seconds_between_check = updates.seconds_between_check
+            }
+            if (typeof updates.tld === 'string' && updates.tld.length > 0) {
+              currentConfig.tld = updates.tld
+            }
+            if (updates.telegram_bot_token !== undefined) {
+              currentConfig.telegram_bot_token = updates.telegram_bot_token || ''
+            }
+            if (updates.telegram_chat_id !== undefined) {
+              currentConfig.telegram_chat_id = updates.telegram_chat_id || ''
+            }
+            if (typeof updates.history_days === 'number' && updates.history_days >= 0) {
+              currentConfig.history_days = updates.history_days
+            }
+            if (typeof updates.history_limit === 'number' && updates.history_limit > 0) {
+              currentConfig.history_limit = updates.history_limit
+            }
+            if (typeof updates.history_noise_protection === 'boolean') {
+              currentConfig.history_noise_protection = updates.history_noise_protection
+            }
+            if (typeof updates.user_agent_strategy === 'string') {
+              currentConfig.user_agent_strategy = updates.user_agent_strategy
+            }
+            if (typeof updates.debug === 'boolean') {
+              currentConfig.debug = updates.debug
+            }
+
+            // Write updated config back to file
+            fs.writeFileSync(configPath, JSON.stringify(currentConfig, null, 2))
+            res.end(JSON.stringify({ ok: true }))
+          } catch (e) {
+            res.statusCode = 400
+            res.end(JSON.stringify({ error: 'Invalid request: ' + e.message }))
+          }
+        })
         return
       }
       if (url.pathname === '/api/test' && req.method === 'POST') {
@@ -1298,7 +1490,7 @@ async function main() {
         req.on('end', () => {
           try {
             const data = JSON.parse(body || '{}')
-            const { urlOrAsin, label, group, warehouse, alerts, threshold, thresholdDrop, baseline } = data
+            const { urlOrAsin, label, group, warehouse, alerts, threshold, thresholdDrop, baseline, repeatAlerts, notifyOnce } = data
             if (!urlOrAsin || typeof urlOrAsin !== 'string') {
               res.statusCode = 400
               return res.end(JSON.stringify({ error: 'urlOrAsin is required' }))
@@ -1312,6 +1504,8 @@ async function main() {
             if (typeof threshold === 'number' && !Number.isNaN(threshold)) tokens.push(`threshold=${Number(threshold).toFixed(2)}`)
             if (typeof thresholdDrop === 'number' && !Number.isNaN(thresholdDrop) && thresholdDrop > 0) tokens.push(`threshold_drop=${Number(thresholdDrop).toFixed(0)}%`)
             if (baseline && ['last','lowest','start'].includes(String(baseline))) tokens.push(`baseline=${baseline}`)
+            if (repeatAlerts === true || repeatAlerts === 'on') tokens.push(`repeat_alerts=on`)
+            if (notifyOnce === true || notifyOnce === 'once') tokens.push(`notify=once`)
             const line = `${urlOrAsin}${tokens.length? '|' + tokens.join('|') : ''}`
             // Append to urls.txt
             const p = new URL('./urls.txt', import.meta.url)
@@ -1398,6 +1592,8 @@ async function main() {
               if (typeof data.threshold === 'number' && !Number.isNaN(data.threshold)) tokens.push(`threshold=${Number(data.threshold).toFixed(2)}`)
               if (typeof data.thresholdDrop === 'number' && !Number.isNaN(data.thresholdDrop) && data.thresholdDrop > 0) tokens.push(`threshold_drop=${Number(data.thresholdDrop).toFixed(0)}%`)
               if (data.baseline && ['last','lowest','start'].includes(String(data.baseline))) tokens.push(`baseline=${data.baseline}`)
+              if (data.repeatAlerts === true || data.repeatAlerts === 'on') tokens.push(`repeat_alerts=on`)
+              if (data.notifyOnce === true || data.notifyOnce === 'once') tokens.push(`notify=once`)
               updated = true
               return head + (tokens.length ? '|' + tokens.join('|') : '')
             })

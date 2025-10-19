@@ -259,6 +259,10 @@ document.getElementById('addForm').onsubmit = async (e) => {
   submitBtn.disabled = true;
   submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding...';
   
+  // Get notification mode
+  const notifyMode = document.querySelector('input[name="notify_mode"]:checked').value;
+  const webhookId = document.getElementById('f_webhook').value;
+
   const formData = {
     urlOrAsin: document.getElementById('f_url').value.trim(),
     label: document.getElementById('f_label').value.trim(),
@@ -266,8 +270,10 @@ document.getElementById('addForm').onsubmit = async (e) => {
     threshold: document.getElementById('f_threshold').value ? Number(document.getElementById('f_threshold').value) : undefined,
     thresholdDrop: document.getElementById('f_drop').value ? Number(document.getElementById('f_drop').value) : undefined,
     baseline: document.getElementById('f_base').value || undefined,
-    warehouse: document.getElementById('f_warehouse').value || undefined,
-    alerts: document.getElementById('f_alerts').value || undefined
+    warehouse: document.getElementById('f_warehouse').value,
+    alerts: document.getElementById('f_alerts').value || undefined,
+    repeatAlerts: notifyMode === 'repeat' ? 'on' : undefined,
+    webhookId: webhookId || undefined
   };
   
   // Remove undefined values
@@ -316,8 +322,197 @@ document.getElementById('btn_scan').onclick = async () => {
   }, 1000);
 };
 
+// Tab Switching
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.onclick = () => {
+    const targetTab = tab.dataset.tab;
+
+    // Update active tab
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+
+    // Update active content
+    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+    document.getElementById('tab-' + targetTab).classList.add('active');
+
+    // Load tab-specific data
+    if (targetTab === 'webhooks') {
+      loadWebhooks();
+    } else if (targetTab === 'settings') {
+      loadSettings();
+    }
+  };
+});
+
+// Webhooks Management
+const loadWebhooks = async () => {
+  const container = document.getElementById('webhooks_list');
+  container.innerHTML = '<div class="loading"><div class="spinner"></div> Loading webhooks...</div>';
+
+  const result = await api('GET', '/api/webhooks');
+  if (result.error) {
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><h3>Failed to load webhooks</h3><p>' + result.error + '</p></div>';
+    return;
+  }
+
+  const webhooks = result.webhooks || [];
+  if (webhooks.length === 0) {
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-bell-slash"></i><h3>No Webhooks Configured</h3><p>Add a Discord webhook to start receiving notifications</p></div>';
+    return;
+  }
+
+  container.innerHTML = webhooks.map((wh, idx) =>
+    '<div class="webhook-card">' +
+      '<div class="webhook-info">' +
+        '<div class="webhook-name">' + wh.name + (wh.isDefault ? ' <span class="badge badge-success">Default</span>' : '') + '</div>' +
+        '<div class="webhook-url">' + wh.url + '</div>' +
+      '</div>' +
+      '<div class="webhook-actions">' +
+        (!wh.isDefault ? '<button class="btn btn-sm btn-outline" onclick="setDefaultWebhook(\'' + wh.id + '\')"><i class="fas fa-star"></i> Set Default</button>' : '') +
+        '<button class="btn btn-sm btn-danger" onclick="deleteWebhook(\'' + wh.id + '\')"><i class="fas fa-trash"></i></button>' +
+      '</div>' +
+    '</div>'
+  ).join('');
+};
+
+window.setDefaultWebhook = async (id) => {
+  const result = await api('PUT', '/api/webhooks/' + id + '/default');
+  if (result.error) {
+    showNotification('Failed to set default: ' + result.error, 'error');
+  } else {
+    showNotification('Default webhook updated', 'success');
+    loadWebhooks();
+  }
+};
+
+window.deleteWebhook = async (id) => {
+  if (!confirm('Are you sure you want to delete this webhook?')) return;
+
+  const result = await api('DELETE', '/api/webhooks/' + id);
+  if (result.error) {
+    showNotification('Failed to delete webhook: ' + result.error, 'error');
+  } else {
+    showNotification('Webhook deleted', 'success');
+    loadWebhooks();
+  }
+};
+
+document.getElementById('btn_add_webhook').onclick = () => {
+  document.getElementById('webhook_form').style.display = 'block';
+  document.getElementById('wh_name').focus();
+};
+
+document.getElementById('btn_cancel_webhook').onclick = () => {
+  document.getElementById('addWebhookForm').reset();
+  document.getElementById('webhook_form').style.display = 'none';
+};
+
+document.getElementById('addWebhookForm').onsubmit = async (e) => {
+  e.preventDefault();
+
+  const formData = {
+    name: document.getElementById('wh_name').value.trim(),
+    url: document.getElementById('wh_url').value.trim()
+  };
+
+  const result = await api('POST', '/api/webhooks', formData);
+  if (result.error) {
+    showNotification('Failed to add webhook: ' + result.error, 'error');
+  } else {
+    showNotification('Webhook added successfully', 'success');
+    document.getElementById('addWebhookForm').reset();
+    document.getElementById('webhook_form').style.display = 'none';
+    loadWebhooks();
+  }
+};
+
+// Settings Management
+const loadSettings = async () => {
+  const container = document.getElementById('settings_content');
+  const form = document.getElementById('settingsForm');
+
+  container.style.display = 'block';
+  form.style.display = 'none';
+  container.innerHTML = '<div class="loading"><div class="spinner"></div> Loading settings...</div>';
+
+  const result = await api('GET', '/api/settings');
+  if (result.error) {
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-exclamation-triangle"></i><h3>Failed to load settings</h3><p>' + result.error + '</p></div>';
+    return;
+  }
+
+  // Populate form
+  document.getElementById('s_minutes').value = result.minutes_per_check || 10;
+  document.getElementById('s_seconds').value = result.seconds_between_check || 60;
+  document.getElementById('s_tld').value = result.tld || 'com';
+  document.getElementById('s_telegram_token').value = result.telegram_bot_token || '';
+  document.getElementById('s_telegram_chat').value = result.telegram_chat_id || '';
+  document.getElementById('s_history_days').value = result.history_days || 7;
+  document.getElementById('s_history_limit').value = result.history_limit || 2000;
+  document.getElementById('s_history_noise').checked = result.history_noise_protection !== false;
+  document.getElementById('s_ua_strategy').value = result.user_agent_strategy || 'sticky-per-item';
+  document.getElementById('s_debug').checked = !!result.debug;
+
+  container.style.display = 'none';
+  form.style.display = 'block';
+};
+
+document.getElementById('btn_save_settings').onclick = async () => {
+  const btn = document.getElementById('btn_save_settings');
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+
+  const formData = {
+    minutes_per_check: Number(document.getElementById('s_minutes').value),
+    seconds_between_check: Number(document.getElementById('s_seconds').value),
+    tld: document.getElementById('s_tld').value,
+    telegram_bot_token: document.getElementById('s_telegram_token').value || undefined,
+    telegram_chat_id: document.getElementById('s_telegram_chat').value || undefined,
+    history_days: Number(document.getElementById('s_history_days').value),
+    history_limit: Number(document.getElementById('s_history_limit').value),
+    history_noise_protection: document.getElementById('s_history_noise').checked,
+    user_agent_strategy: document.getElementById('s_ua_strategy').value,
+    debug: document.getElementById('s_debug').checked
+  };
+
+  Object.keys(formData).forEach(key => formData[key] === undefined && delete formData[key]);
+
+  const result = await api('PUT', '/api/settings', formData);
+
+  btn.disabled = false;
+  btn.innerHTML = originalText;
+
+  if (result.error) {
+    showNotification('Failed to save settings: ' + result.error, 'error');
+  } else {
+    showNotification('Settings saved! Restart monitor for changes to take effect.', 'success');
+  }
+};
+
+// Populate webhook dropdown
+const populateWebhookDropdown = async () => {
+  const select = document.getElementById('f_webhook');
+  if (!select) return;
+
+  const result = await api('GET', '/api/webhooks');
+  if (result.error || !result.webhooks) return;
+
+  // Clear existing options except default
+  select.innerHTML = '<option value="">Default Webhook</option>';
+
+  // Add each webhook as an option
+  result.webhooks.forEach(wh => {
+    const option = document.createElement('option');
+    option.value = wh.id;
+    option.textContent = wh.name + (wh.isDefault ? ' (Default)' : '');
+    select.appendChild(option);
+  });
+};
+
 // Auto-refresh every 30 seconds
 setInterval(loadData, 30000);
 
 // Initial load
 loadData();
+populateWebhookDropdown();
