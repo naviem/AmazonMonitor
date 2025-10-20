@@ -756,12 +756,16 @@ const showEditModal = async (item) => {
   document.getElementById('edit_threshold').value = item.threshold || '';
   document.getElementById('edit_drop').value = item.thresholdDrop || '';
   document.getElementById('edit_base').value = item.baseline || '';
-  document.getElementById('edit_warehouse').value = item.useWarehouse === true ? 'on' : (item.useWarehouse === false ? 'off' : 'on');
+  document.getElementById('edit_warehouse').value = item.warehouse || 'on';
   document.getElementById('edit_alerts').value = item.alerts === 'both' ? '' : (item.alerts || '');
-  document.getElementById('edit_webhook').value = item.webhookId || '';
+
+  // Set webhook dropdown - need to wait for it to be populated
+  setTimeout(() => {
+    document.getElementById('edit_webhook').value = item.webhookId || '';
+  }, 100);
 
   // Set notification mode
-  if (item.repeatAlerts) {
+  if (item.repeatAlerts === true || item.repeatAlerts === 'on') {
     document.getElementById('edit_repeat_alerts').checked = true;
   } else {
     document.getElementById('edit_notify_normal').checked = true;

@@ -1460,7 +1460,9 @@ async function main() {
               symbol: symbol,
               current: { price: currentPrice || 0, available: !!currentAvail, source: currentSourceIsWh ? 'warehouse' : 'main', symbol },
               lowestSeen: st.lowestSeen || null,
-              history: st.history || []
+              history: st.history || [],
+              repeatAlerts: e.repeatAlerts || false,
+              webhookId: e.webhookId || null
             }
           })
           res.end(JSON.stringify({ items }))
@@ -1579,11 +1581,11 @@ async function main() {
             const nextLines = lines.map(l => {
               const t = l.trim()
               if (!t || t.startsWith('#')) return l
-              const a = extractAsin(t)
-              if (a !== asin) return l
               // Parse existing line to keep URL/ASIN as-is, then rebuild tokens
               const parts = t.split('|').map(s => s.trim())
               const head = parts[0]
+              const a = extractAsin(head)
+              if (a !== asin) return l
               const tokens = []
               if (data.label && String(data.label).trim()) tokens.push(`label="${String(data.label).replace(/"/g,'\\"')}"`)
               if (data.group && String(data.group).trim()) tokens.push(`group="${String(data.group).replace(/"/g,'\\"')}"`)
