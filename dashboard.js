@@ -785,19 +785,17 @@ document.getElementById('editForm').onsubmit = async (e) => {
 
   const formData = {
     asin: asin,
-    label: document.getElementById('edit_label').value.trim() || undefined,
-    group: document.getElementById('edit_group').value.trim() || undefined,
-    threshold: document.getElementById('edit_threshold').value ? Number(document.getElementById('edit_threshold').value) : undefined,
-    thresholdDrop: document.getElementById('edit_drop').value ? Number(document.getElementById('edit_drop').value) : undefined,
-    baseline: document.getElementById('edit_base').value || undefined,
-    warehouse: document.getElementById('edit_warehouse').value,
-    alerts: document.getElementById('edit_alerts').value || undefined,
-    repeatAlerts: notifyMode === 'repeat' ? 'on' : undefined,
-    webhookId: document.getElementById('edit_webhook').value || undefined
+    label: document.getElementById('edit_label').value.trim() || '',
+    group: document.getElementById('edit_group').value.trim() || '',
+    threshold: document.getElementById('edit_threshold').value ? Number(document.getElementById('edit_threshold').value) : null,
+    thresholdDrop: document.getElementById('edit_drop').value ? Number(document.getElementById('edit_drop').value) : null,
+    baseline: document.getElementById('edit_base').value || '',
+    warehouse: document.getElementById('edit_warehouse').value || 'on',
+    alerts: document.getElementById('edit_alerts').value || '',
+    repeatAlerts: notifyMode === 'repeat' ? 'on' : 'off',
+    notifyOnce: false,
+    webhookId: document.getElementById('edit_webhook').value || ''
   };
-
-  // Remove undefined values
-  Object.keys(formData).forEach(key => formData[key] === undefined && delete formData[key]);
 
   const result = await api('PUT', '/api/items', formData);
 

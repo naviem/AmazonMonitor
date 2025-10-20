@@ -1578,31 +1578,32 @@ async function main() {
             let updated = false
             const nextLines = lines.map(l => {
               const t = l.trim()
-              if (!t) return l
+              if (!t || t.startsWith('#')) return l
               const a = extractAsin(t)
               if (a !== asin) return l
               // Parse existing line to keep URL/ASIN as-is, then rebuild tokens
               const parts = t.split('|').map(s => s.trim())
               const head = parts[0]
               const tokens = []
-              if (data.label) tokens.push(`label="${String(data.label).replace(/"/g,'\\"')}"`)
-              if (data.group) tokens.push(`group="${String(data.group).replace(/"/g,'\\"')}"`)
+              if (data.label && String(data.label).trim()) tokens.push(`label="${String(data.label).replace(/"/g,'\\"')}"`)
+              if (data.group && String(data.group).trim()) tokens.push(`group="${String(data.group).replace(/"/g,'\\"')}"`)
               if (data.warehouse && ['on','off','only'].includes(String(data.warehouse))) tokens.push(`warehouse=${data.warehouse}`)
-              if (data.alerts && ['stock','price','none'].includes(String(data.alerts))) tokens.push(`alerts=${data.alerts}`)
-              if (typeof data.threshold === 'number' && !Number.isNaN(data.threshold)) tokens.push(`threshold=${Number(data.threshold).toFixed(2)}`)
-              if (typeof data.thresholdDrop === 'number' && !Number.isNaN(data.thresholdDrop) && data.thresholdDrop > 0) tokens.push(`threshold_drop=${Number(data.thresholdDrop).toFixed(0)}%`)
+              if (data.alerts && ['stock','price','none','both'].includes(String(data.alerts))) tokens.push(`alerts=${data.alerts}`)
+              if (data.threshold !== null && data.threshold !== '' && typeof data.threshold === 'number' && !Number.isNaN(data.threshold)) tokens.push(`threshold=${Number(data.threshold).toFixed(2)}`)
+              if (data.thresholdDrop !== null && data.thresholdDrop !== '' && typeof data.thresholdDrop === 'number' && !Number.isNaN(data.thresholdDrop) && data.thresholdDrop > 0) tokens.push(`threshold_drop=${Number(data.thresholdDrop).toFixed(0)}%`)
               if (data.baseline && ['last','lowest','start'].includes(String(data.baseline))) tokens.push(`baseline=${data.baseline}`)
-              if (data.repeatAlerts === true || data.repeatAlerts === 'on') tokens.push(`repeat_alerts=on`)
-              if (data.notifyOnce === true || data.notifyOnce === 'once') tokens.push(`notify=once`)
+              if (data.repeatAlerts === 'on' || data.repeatAlerts === true) tokens.push(`repeat_alerts=on`)
+              if (data.notifyOnce === 'once' || data.notifyOnce === true) tokens.push(`notify=once`)
+              if (data.webhookId && String(data.webhookId).trim()) tokens.push(`webhook=${String(data.webhookId).trim()}`)
               updated = true
               return head + (tokens.length ? '|' + tokens.join('|') : '')
             })
-            if (!updated) { res.statusCode = 404; return res.end(JSON.stringify({ error: 'ASIN not found' })) }
+            if (!updated) { res.statusCode = 404; return res.end(JSON.stringify({ error: 'ASIN not found in urls.txt' })) }
             fs.writeFileSync(p, nextLines.join('\n'))
             res.end(JSON.stringify({ ok: true }))
           } catch (e) {
             res.statusCode = 400
-            res.end(JSON.stringify({ error: 'Invalid body' }))
+            res.end(JSON.stringify({ error: 'Invalid body: ' + e.message }))
           }
         })
         return
