@@ -739,6 +739,174 @@
         flex-direction: column;
       }
     }
+
+    /* Price History Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 2000;
+      overflow-y: auto;
+      padding: 2rem;
+    }
+
+    .modal-overlay.active {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-content {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      max-width: 900px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .modal-title {
+      margin: 0;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .modal-close {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      transition: color 0.2s;
+      line-height: 1;
+    }
+
+    .modal-close:hover {
+      color: var(--text-primary);
+    }
+
+    .modal-body {
+      padding: 1.5rem;
+    }
+
+    .history-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .history-stat {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .history-stat-value {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--primary);
+      margin-bottom: 0.25rem;
+    }
+
+    .history-stat-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .chart-container {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1.5rem;
+      min-height: 400px;
+      position: relative;
+    }
+
+    .chart-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+      color: var(--text-secondary);
+    }
+
+    .chart-empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 400px;
+      color: var(--text-secondary);
+      text-align: center;
+    }
+
+    .chart-empty i {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      opacity: 0.5;
+    }
+
+    .chart-legend {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+      color: var(--text-secondary);
+    }
+
+    .legend-color {
+      width: 16px;
+      height: 16px;
+      border-radius: 2px;
+    }
+
+    @media (max-width: 768px) {
+      .modal-overlay {
+        padding: 1rem;
+      }
+
+      .modal-content {
+        max-height: 95vh;
+      }
+
+      .modal-header, .modal-body {
+        padding: 1rem;
+      }
+
+      .chart-container {
+        padding: 1rem;
+        min-height: 300px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -881,8 +1049,8 @@
         <div class="form-group">
           <div>
             <label>Discord Webhook <span class="tooltip" data-tooltip="Choose which Discord webhook will receive alerts for this product. Manage webhooks in the Webhooks tab."><i class="fas fa-info-circle"></i></span></label>
-            <select id="f_webhook" class="form-control">
-              <option value="">Default Webhook</option>
+            <select id="f_webhook" class="form-control" required>
+              <option value="">No webhooks configured</option>
             </select>
           </div>
         </div>
@@ -1105,6 +1273,119 @@
     </div>
     <!-- End Settings Tab -->
 
+  </div>
+
+  <!-- Price History Modal -->
+  <div id="historyModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalTitle">Price History</h3>
+        <button class="modal-close" id="closeModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="history-stats" id="historyStats"></div>
+        <div class="chart-container" id="chartContainer">
+          <div class="chart-loading">
+            <div class="spinner"></div> Loading price history...
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Item Modal -->
+  <div id="editModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Edit Product</h3>
+        <button class="modal-close" id="closeEditModal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <form id="editForm">
+          <input type="hidden" id="edit_asin">
+
+          <div class="form-group">
+            <div>
+              <label>Label</label>
+              <input type="text" id="edit_label" class="form-control" placeholder="e.g., Gaming Headset">
+            </div>
+            <div>
+              <label>Group</label>
+              <input type="text" id="edit_group" class="form-control" placeholder="e.g., Electronics">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div>
+              <label>Price Threshold</label>
+              <input type="number" id="edit_threshold" class="form-control" placeholder="e.g., 199.99" step="0.01" min="0">
+            </div>
+            <div>
+              <label>Threshold Drop %</label>
+              <input type="number" id="edit_drop" class="form-control" placeholder="e.g., 15" step="1" min="1" max="90">
+            </div>
+            <div>
+              <label>Baseline</label>
+              <select id="edit_base" class="form-control">
+                <option value="">Last Price (Default)</option>
+                <option value="last">Last Price</option>
+                <option value="lowest">Lowest Price Ever</option>
+                <option value="start">Starting Price</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div>
+              <label>Amazon Warehouse</label>
+              <select id="edit_warehouse" class="form-control">
+                <option value="on">Include Warehouse Deals</option>
+                <option value="off">Exclude Warehouse Deals</option>
+                <option value="only">Warehouse Deals Only</option>
+              </select>
+            </div>
+            <div>
+              <label>Alert Types</label>
+              <select id="edit_alerts" class="form-control">
+                <option value="">All Alerts (Price + Stock)</option>
+                <option value="stock">Back-in-Stock Only</option>
+                <option value="price">Price Drops Only</option>
+                <option value="none">No Alerts</option>
+              </select>
+            </div>
+            <div>
+              <label>Notification Mode</label>
+              <div style="display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.5rem;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; margin: 0;">
+                  <input type="radio" name="edit_notify_mode" value="normal" id="edit_notify_normal" checked style="width: auto;">
+                  <span>Normal (Alert on Changes)</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; margin: 0;">
+                  <input type="radio" name="edit_notify_mode" value="repeat" id="edit_repeat_alerts" style="width: auto;">
+                  <span>Repeat Alerts (Continuous)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div>
+              <label>Discord Webhook</label>
+              <select id="edit_webhook" class="form-control" required>
+                <option value="">No webhooks configured</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group" style="grid-template-columns: 1fr;">
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+              <button type="button" id="cancelEdit" class="btn btn-outline">Cancel</button>
+              <button type="submit" class="btn btn-success"><i class="fas fa-save"></i> Save Changes</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
   </div>
 
   <script src="dashboard.js"></script>

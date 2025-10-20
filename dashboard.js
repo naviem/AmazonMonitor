@@ -27,7 +27,7 @@ const api = async (method, path, body = null) => {
 };
 
 const formatPrice = (price, symbol = '$') => {
-  return symbol + (price || 0).toFixed(2);
+  return symbol + (Number(price) || 0).toFixed(2);
 };
 
 const formatTimeAgo = (timestamp) => {
@@ -151,6 +151,9 @@ const renderItems = (items) => {
             '</div>' : '') +
             
             '<div class="item-actions">' +
+              '<button class="btn btn-sm btn-primary history-btn" data-asin="' + item.asin + '" data-title="' + (item.label || item.title || 'Product').replace(/"/g, '&quot;') + '">' +
+                '<i class="fas fa-chart-line"></i> History' +
+              '</button>' +
               '<button class="btn btn-sm btn-outline edit-btn" data-asin="' + item.asin + '">' +
                 '<i class="fas fa-edit"></i> Edit' +
               '</button>' +
@@ -172,14 +175,46 @@ const renderItems = (items) => {
 };
 
 const bindItemEvents = () => {
+  document.querySelectorAll('.history-btn').forEach(btn => {
+    btn.onclick = () => {
+      const asin = btn.dataset.asin;
+      const title = btn.dataset.title;
+      showHistoryModal(asin, title);
+    };
+  });
+
+  document.querySelectorAll('.edit-btn').forEach(btn => {
+    btn.onclick = async () => {
+      const asin = btn.dataset.asin;
+
+      // Find the item data
+      const itemsResult = await api('GET', '/api/items');
+      if (itemsResult.error) {
+        showNotification('Failed to load item data', 'error');
+        return;
+      }
+
+      const items = itemsResult.items || itemsResult;
+      const item = items.find(i => i.asin === asin);
+
+      if (!item) {
+        showNotification('Item not found', 'error');
+        return;
+      }
+
+      // Show edit modal
+      showEditModal(item);
+    };
+  });
+
   document.querySelectorAll('.delete-btn').forEach(btn => {
     btn.onclick = async () => {
       const asin = btn.dataset.asin;
       if (!confirm('Are you sure you want to delete this item?')) return;
-      
+
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
-      
+
       const result = await api('DELETE', '/api/items?asin=' + encodeURIComponent(asin));
       if (result.error) {
         showNotification('Failed to delete item: ' + result.error, 'error');
@@ -191,17 +226,17 @@ const bindItemEvents = () => {
       }
     };
   });
-  
+
   document.querySelectorAll('.test-btn').forEach(btn => {
     btn.onclick = async () => {
       const asin = btn.dataset.asin;
       btn.disabled = true;
       btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
-      
+
       const result = await api('POST', '/api/test?asin=' + encodeURIComponent(asin));
       btn.disabled = false;
       btn.innerHTML = '<i class="fas fa-paper-plane"></i> Test';
-      
+
       if (result.error) {
         showNotification('Test failed: ' + result.error, 'error');
       } else {
@@ -253,15 +288,25 @@ document.getElementById('searchInput').onkeypress = (e) => {
 document.getElementById('addForm').onsubmit = async (e) => {
   e.preventDefault();
   if (isLoading) return;
-  
+
+  // Check if webhooks are configured
+  const webhookId = document.getElementById('f_webhook').value;
+  const webhookSelect = document.getElementById('f_webhook');
+
+  if (!webhookId || webhookSelect.options[0]?.textContent === 'No webhooks configured') {
+    showNotification('Please add a webhook in the Webhooks tab before adding products', 'error');
+    // Switch to webhooks tab
+    document.querySelector('[data-tab="webhooks"]').click();
+    return;
+  }
+
   const submitBtn = e.target.querySelector('button[type="submit"]');
   const originalText = submitBtn.innerHTML;
   submitBtn.disabled = true;
   submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding...';
-  
+
   // Get notification mode
   const notifyMode = document.querySelector('input[name="notify_mode"]:checked').value;
-  const webhookId = document.getElementById('f_webhook').value;
 
   const formData = {
     urlOrAsin: document.getElementById('f_url').value.trim(),
@@ -273,27 +318,30 @@ document.getElementById('addForm').onsubmit = async (e) => {
     warehouse: document.getElementById('f_warehouse').value,
     alerts: document.getElementById('f_alerts').value || undefined,
     repeatAlerts: notifyMode === 'repeat' ? 'on' : undefined,
-    webhookId: webhookId || undefined
+    webhookId: webhookId
   };
-  
+
   // Remove undefined values
   Object.keys(formData).forEach(key => formData[key] === undefined && delete formData[key]);
-  
+
   const result = await api('POST', '/api/items', formData);
-  
+
   submitBtn.disabled = false;
   submitBtn.innerHTML = originalText;
-  
+
   if (result.error) {
     showNotification('Failed to add product: ' + result.error, 'error');
   } else {
     document.getElementById('addForm').reset();
     document.getElementById('searchResults').style.display = 'none';
     showNotification('Product added! Fetching details...', 'success');
-    
+
+    // Repopulate webhook dropdown after reset
+    populateWebhookDropdown();
+
     // Immediately reload to show the new product
     loadData();
-    
+
     // Auto-refresh a few more times to catch the product details being populated
     setTimeout(loadData, 2000);  // After 2 seconds
     setTimeout(loadData, 5000);  // After 5 seconds
@@ -382,6 +430,8 @@ window.setDefaultWebhook = async (id) => {
   } else {
     showNotification('Default webhook updated', 'success');
     loadWebhooks();
+    // Update webhook dropdown in product form
+    populateWebhookDropdown();
   }
 };
 
@@ -394,6 +444,8 @@ window.deleteWebhook = async (id) => {
   } else {
     showNotification('Webhook deleted', 'success');
     loadWebhooks();
+    // Update webhook dropdown in product form
+    populateWebhookDropdown();
   }
 };
 
@@ -423,6 +475,8 @@ document.getElementById('addWebhookForm').onsubmit = async (e) => {
     document.getElementById('addWebhookForm').reset();
     document.getElementById('webhook_form').style.display = 'none';
     loadWebhooks();
+    // Update webhook dropdown in product form
+    populateWebhookDropdown();
   }
 };
 
@@ -496,18 +550,292 @@ const populateWebhookDropdown = async () => {
   if (!select) return;
 
   const result = await api('GET', '/api/webhooks');
-  if (result.error || !result.webhooks) return;
+  if (result.error || !result.webhooks) {
+    select.innerHTML = '<option value="">No webhooks configured</option>';
+    return;
+  }
 
-  // Clear existing options except default
-  select.innerHTML = '<option value="">Default Webhook</option>';
+  if (result.webhooks.length === 0) {
+    select.innerHTML = '<option value="">No webhooks configured</option>';
+    return;
+  }
+
+  // Clear existing options
+  select.innerHTML = '';
 
   // Add each webhook as an option
-  result.webhooks.forEach(wh => {
+  result.webhooks.forEach((wh, index) => {
     const option = document.createElement('option');
     option.value = wh.id;
     option.textContent = wh.name + (wh.isDefault ? ' (Default)' : '');
+    // Select the first (or default) webhook by default
+    if (wh.isDefault || index === 0) {
+      option.selected = true;
+    }
     select.appendChild(option);
   });
+};
+
+// Price History Modal
+const showHistoryModal = async (asin, title) => {
+  const modal = document.getElementById('historyModal');
+  const modalTitle = document.getElementById('modalTitle');
+  const statsContainer = document.getElementById('historyStats');
+  const chartContainer = document.getElementById('chartContainer');
+
+  // Set title
+  modalTitle.textContent = 'Price History: ' + title;
+
+  // Show modal
+  modal.classList.add('active');
+
+  // Reset content
+  statsContainer.innerHTML = '';
+  chartContainer.innerHTML = '<div class="chart-loading"><div class="spinner"></div> Loading price history...</div>';
+
+  // Fetch history data
+  const result = await api('GET', '/api/history?asin=' + encodeURIComponent(asin));
+
+  if (result.error) {
+    chartContainer.innerHTML = '<div class="chart-empty"><i class="fas fa-exclamation-triangle"></i><p>Failed to load price history</p><p style="font-size: 0.875rem; margin-top: 0.5rem;">' + result.error + '</p></div>';
+    return;
+  }
+
+  const { history, lowestSeen, symbol } = result;
+
+  if (!history || history.length === 0) {
+    chartContainer.innerHTML = '<div class="chart-empty"><i class="fas fa-chart-line"></i><p>No price history available</p><p style="font-size: 0.875rem; margin-top: 0.5rem;">Price history will be recorded as the monitor runs</p></div>';
+    return;
+  }
+
+  // Calculate stats
+  const prices = history.map(h => h.price);
+  const currentPrice = prices[prices.length - 1];
+  const highestPrice = Math.max(...prices);
+  const lowestPrice = Math.min(...prices);
+  const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+
+  // Render stats
+  statsContainer.innerHTML =
+    '<div class="history-stat"><div class="history-stat-value">' + formatPrice(currentPrice, symbol) + '</div><div class="history-stat-label">Current Price</div></div>' +
+    '<div class="history-stat"><div class="history-stat-value">' + formatPrice(lowestPrice, symbol) + '</div><div class="history-stat-label">Lowest Price</div></div>' +
+    '<div class="history-stat"><div class="history-stat-value">' + formatPrice(highestPrice, symbol) + '</div><div class="history-stat-label">Highest Price</div></div>' +
+    '<div class="history-stat"><div class="history-stat-value">' + formatPrice(avgPrice, symbol) + '</div><div class="history-stat-label">Average Price</div></div>' +
+    '<div class="history-stat"><div class="history-stat-value">' + history.length + '</div><div class="history-stat-label">Data Points</div></div>';
+
+  // Render chart
+  renderPriceChart(chartContainer, history, symbol);
+};
+
+const renderPriceChart = (container, history, symbol) => {
+  const width = container.clientWidth - 48; // Account for padding
+  const height = 400;
+  const padding = { top: 20, right: 20, bottom: 60, left: 60 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  // Separate data by source
+  const mainData = history.filter(h => h.source === 'main');
+  const warehouseData = history.filter(h => h.source === 'warehouse');
+
+  // Get min/max values
+  const allPrices = history.map(h => h.price);
+  const minPrice = Math.min(...allPrices);
+  const maxPrice = Math.max(...allPrices);
+  const priceRange = maxPrice - minPrice;
+  const pricePadding = priceRange * 0.1;
+
+  const minTs = Math.min(...history.map(h => h.ts));
+  const maxTs = Math.max(...history.map(h => h.ts));
+
+  // Scale functions
+  const scaleX = (ts) => padding.left + ((ts - minTs) / (maxTs - minTs)) * chartWidth;
+  const scaleY = (price) => padding.top + chartHeight - ((price - minPrice + pricePadding) / (priceRange + pricePadding * 2)) * chartHeight;
+
+  // Create SVG
+  let svg = '<svg width="' + width + '" height="' + height + '" style="background: var(--bg-tertiary);">';
+
+  // Grid lines
+  const gridLines = 5;
+  for (let i = 0; i <= gridLines; i++) {
+    const y = padding.top + (chartHeight / gridLines) * i;
+    const price = maxPrice + pricePadding - ((priceRange + pricePadding * 2) / gridLines) * i;
+    svg += '<line x1="' + padding.left + '" y1="' + y + '" x2="' + (width - padding.right) + '" y2="' + y + '" stroke="var(--border)" stroke-width="1" stroke-dasharray="5,5"/>';
+    svg += '<text x="' + (padding.left - 10) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" fill="var(--text-secondary)">' + symbol + price.toFixed(2) + '</text>';
+  }
+
+  // Draw lines
+  const drawLine = (data, color) => {
+    if (data.length < 2) return '';
+    let path = 'M';
+    data.forEach((point, i) => {
+      const x = scaleX(point.ts);
+      const y = scaleY(point.price);
+      path += (i === 0 ? '' : ' L') + x + ',' + y;
+    });
+    return '<path d="' + path + '" stroke="' + color + '" stroke-width="2" fill="none"/>';
+  };
+
+  if (mainData.length > 0) {
+    svg += drawLine(mainData, '#4ec9b0'); // Success color for main
+  }
+
+  if (warehouseData.length > 0) {
+    svg += drawLine(warehouseData, '#007acc'); // Primary color for warehouse
+  }
+
+  // Draw points
+  const drawPoints = (data, color) => {
+    return data.map(point => {
+      const x = scaleX(point.ts);
+      const y = scaleY(point.price);
+      return '<circle cx="' + x + '" cy="' + y + '" r="4" fill="' + color + '" stroke="var(--bg-tertiary)" stroke-width="2"/>';
+    }).join('');
+  };
+
+  if (mainData.length > 0) {
+    svg += drawPoints(mainData, '#4ec9b0');
+  }
+
+  if (warehouseData.length > 0) {
+    svg += drawPoints(warehouseData, '#007acc');
+  }
+
+  // X-axis labels (dates)
+  const dateLabels = 5;
+  for (let i = 0; i <= dateLabels; i++) {
+    const ts = minTs + ((maxTs - minTs) / dateLabels) * i;
+    const x = scaleX(ts);
+    const date = new Date(ts);
+    const label = (date.getMonth() + 1) + '/' + date.getDate();
+    svg += '<text x="' + x + '" y="' + (height - padding.bottom + 20) + '" text-anchor="middle" font-size="11" fill="var(--text-secondary)">' + label + '</text>';
+  }
+
+  // Axes
+  svg += '<line x1="' + padding.left + '" y1="' + padding.top + '" x2="' + padding.left + '" y2="' + (height - padding.bottom) + '" stroke="var(--text-secondary)" stroke-width="1"/>';
+  svg += '<line x1="' + padding.left + '" y1="' + (height - padding.bottom) + '" x2="' + (width - padding.right) + '" y2="' + (height - padding.bottom) + '" stroke="var(--text-secondary)" stroke-width="1"/>';
+
+  svg += '</svg>';
+
+  // Legend
+  let legend = '<div class="chart-legend">';
+  if (mainData.length > 0) {
+    legend += '<div class="legend-item"><div class="legend-color" style="background: #4ec9b0;"></div><span>Main Price</span></div>';
+  }
+  if (warehouseData.length > 0) {
+    legend += '<div class="legend-item"><div class="legend-color" style="background: #007acc;"></div><span>Warehouse Price</span></div>';
+  }
+  legend += '</div>';
+
+  container.innerHTML = legend + svg;
+};
+
+// Edit Item Modal
+const showEditModal = async (item) => {
+  const modal = document.getElementById('editModal');
+
+  // Populate webhooks dropdown in edit modal
+  const webhookSelect = document.getElementById('edit_webhook');
+  const webhooksResult = await api('GET', '/api/webhooks');
+  if (!webhooksResult.error && webhooksResult.webhooks && webhooksResult.webhooks.length > 0) {
+    webhookSelect.innerHTML = '';
+    webhooksResult.webhooks.forEach(wh => {
+      const option = document.createElement('option');
+      option.value = wh.id;
+      option.textContent = wh.name + (wh.isDefault ? ' (Default)' : '');
+      webhookSelect.appendChild(option);
+    });
+  } else {
+    webhookSelect.innerHTML = '<option value="">No webhooks configured</option>';
+  }
+
+  // Populate form with current values
+  document.getElementById('edit_asin').value = item.asin;
+  document.getElementById('edit_label').value = item.label || '';
+  document.getElementById('edit_group').value = item.group || '';
+  document.getElementById('edit_threshold').value = item.threshold || '';
+  document.getElementById('edit_drop').value = item.thresholdDrop || '';
+  document.getElementById('edit_base').value = item.baseline || '';
+  document.getElementById('edit_warehouse').value = item.useWarehouse === true ? 'on' : (item.useWarehouse === false ? 'off' : 'on');
+  document.getElementById('edit_alerts').value = item.alerts === 'both' ? '' : (item.alerts || '');
+  document.getElementById('edit_webhook').value = item.webhookId || '';
+
+  // Set notification mode
+  if (item.repeatAlerts) {
+    document.getElementById('edit_repeat_alerts').checked = true;
+  } else {
+    document.getElementById('edit_notify_normal').checked = true;
+  }
+
+  // Show modal
+  modal.classList.add('active');
+};
+
+// Edit form submission
+document.getElementById('editForm').onsubmit = async (e) => {
+  e.preventDefault();
+
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const originalText = submitBtn.innerHTML;
+  submitBtn.disabled = true;
+  submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+
+  const asin = document.getElementById('edit_asin').value;
+  const notifyMode = document.querySelector('input[name="edit_notify_mode"]:checked').value;
+
+  const formData = {
+    asin: asin,
+    label: document.getElementById('edit_label').value.trim() || undefined,
+    group: document.getElementById('edit_group').value.trim() || undefined,
+    threshold: document.getElementById('edit_threshold').value ? Number(document.getElementById('edit_threshold').value) : undefined,
+    thresholdDrop: document.getElementById('edit_drop').value ? Number(document.getElementById('edit_drop').value) : undefined,
+    baseline: document.getElementById('edit_base').value || undefined,
+    warehouse: document.getElementById('edit_warehouse').value,
+    alerts: document.getElementById('edit_alerts').value || undefined,
+    repeatAlerts: notifyMode === 'repeat' ? 'on' : undefined,
+    webhookId: document.getElementById('edit_webhook').value || undefined
+  };
+
+  // Remove undefined values
+  Object.keys(formData).forEach(key => formData[key] === undefined && delete formData[key]);
+
+  const result = await api('PUT', '/api/items', formData);
+
+  submitBtn.disabled = false;
+  submitBtn.innerHTML = originalText;
+
+  if (result.error) {
+    showNotification('Failed to update product: ' + result.error, 'error');
+  } else {
+    showNotification('Product updated successfully!', 'success');
+    document.getElementById('editModal').classList.remove('active');
+    loadData();
+  }
+};
+
+// Modal close handlers
+document.getElementById('closeModal').onclick = () => {
+  document.getElementById('historyModal').classList.remove('active');
+};
+
+document.getElementById('historyModal').onclick = (e) => {
+  if (e.target.id === 'historyModal') {
+    document.getElementById('historyModal').classList.remove('active');
+  }
+};
+
+document.getElementById('closeEditModal').onclick = () => {
+  document.getElementById('editModal').classList.remove('active');
+};
+
+document.getElementById('cancelEdit').onclick = () => {
+  document.getElementById('editModal').classList.remove('active');
+};
+
+document.getElementById('editModal').onclick = (e) => {
+  if (e.target.id === 'editModal') {
+    document.getElementById('editModal').classList.remove('active');
+  }
 };
 
 // Auto-refresh every 30 seconds
