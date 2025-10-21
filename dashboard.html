@@ -1208,16 +1208,27 @@
           <h3 style="margin-bottom: 1rem; font-size: 1rem; color: var(--text-primary);">Scan Configuration</h3>
           <div class="form-group">
             <div>
-              <label>Scan Interval (minutes) <span class="tooltip" data-tooltip="How often to check all products. Minimum: 10 minutes"><i class="fas fa-info-circle"></i></span></label>
-              <input type="number" id="s_minutes" class="form-control" min="10" step="1" required>
+              <label>Scan Interval - Minutes <span class="tooltip" data-tooltip="Minutes portion of how often to check all products. Works together with seconds field below."><i class="fas fa-info-circle"></i></span></label>
+              <input type="number" id="s_scan_minutes" class="form-control" min="0" step="1" placeholder="e.g., 10" required>
             </div>
             <div>
-              <label>Delay Between Items (seconds) <span class="tooltip" data-tooltip="Wait time between checking each product. Minimum: 60 seconds"><i class="fas fa-info-circle"></i></span></label>
-              <input type="number" id="s_seconds" class="form-control" min="60" step="1" required>
+              <label>Scan Interval - Seconds <span class="tooltip" data-tooltip="Seconds portion of scan interval. Combine with minutes field for total interval (e.g., 10 min + 30 sec = scan every 10.5 minutes)"><i class="fas fa-info-circle"></i></span></label>
+              <input type="number" id="s_scan_seconds" class="form-control" min="0" max="59" step="1" placeholder="e.g., 30" required>
             </div>
             <div>
               <label>Amazon TLD <span class="tooltip" data-tooltip="Which Amazon site to monitor (ca, com, co.uk, de, etc.)"><i class="fas fa-info-circle"></i></span></label>
               <input type="text" id="s_tld" class="form-control" placeholder="e.g., ca, com, co.uk" required>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <div>
+              <label>Delay Between Items - Minutes <span class="tooltip" data-tooltip="Minutes portion of wait time between checking each product during a scan."><i class="fas fa-info-circle"></i></span></label>
+              <input type="number" id="s_delay_minutes" class="form-control" min="0" step="1" placeholder="e.g., 1">
+            </div>
+            <div>
+              <label>Delay Between Items - Seconds <span class="tooltip" data-tooltip="Seconds portion of delay between items. Default: 60 seconds (1 minute). Helps avoid rate limiting."><i class="fas fa-info-circle"></i></span></label>
+              <input type="number" id="s_delay_seconds" class="form-control" min="0" max="59" step="1" placeholder="e.g., 0" required>
             </div>
           </div>
 
