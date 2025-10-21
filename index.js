@@ -32,7 +32,7 @@ function readConfig(url){
   try { return parseJsonWithComments(raw) } catch { return JSON.parse(raw) }
 }
 
-const config = readConfig(new URL('./config.json', import.meta.url))
+let config = readConfig(new URL('./config.json', import.meta.url))
 
 /*
   CONFIG REFERENCE (copy into your config.json as needed; values here are defaults if missing)
@@ -808,6 +808,7 @@ async function checkOnce() {
   const state = loadWatch() // { [url]: { lastPrice, symbol, title, image, available, warehouse?, useWarehouse?, threshold? } }
   let sent = 0
   let errors = 0
+  let hasChanges = false  // Track if watch.json needs to be saved
 
   for (let i = 0; i < items.length; i++) {
     const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce, repeatAlerts } = items[i]
@@ -828,6 +829,17 @@ async function checkOnce() {
 
       const prev = state[finalUrl]
       const alertsMode = allowStockAlerts && allowPriceAlerts ? 'both' : (allowStockAlerts ? 'stock' : (allowPriceAlerts ? 'price' : 'none'))
+
+      // Detect if key state fields changed
+      const stateChanged = !prev
+        || prev.lastPrice !== info.lastPrice
+        || prev.available !== (info.available || false)
+        || prev.title !== info.title
+        || prev.image !== info.image
+        || JSON.stringify(prev.warehouse) !== JSON.stringify(info.warehouse || null)
+
+      if (stateChanged) hasChanges = true
+
       state[finalUrl] = {
         lastPrice: info.lastPrice,
         symbol: info.symbol,
@@ -944,7 +956,10 @@ async function checkOnce() {
           const consistent = lastN.every(p => Math.abs(p - Number(entry.price||0)) / Math.max(1,p) < 0.05)
           accept = consistent
         }
-        if (accept) hist.push(entry)
+        if (accept) {
+          hist.push(entry)
+          hasChanges = true  // History was updated
+        }
 
         const maxPoints = Number.isFinite(historyCfg.max_points) ? historyCfg.max_points : 2000
         if (hist.length > maxPoints) {
@@ -980,9 +995,11 @@ async function checkOnce() {
       const ls = state[finalUrl].lowestSeen
       if (checkMain && mainNewPrice > 0 && (!ls || mainNewPrice < ls.price)) {
         state[finalUrl].lowestSeen = { source: 'main', price: Number(mainNewPrice), ts: nowTs }
+        hasChanges = true  // lowestSeen was updated
       }
       if (checkWarehouse && whNewPrice > 0 && (!ls || whNewPrice < ls.price)) {
         state[finalUrl].lowestSeen = { source: 'warehouse', price: Number(whNewPrice), ts: nowTs }
+        hasChanges = true  // lowestSeen was updated
       }
 
       // Build offer listing URL (aod=1 opens All Offers Display on mobile & desktop)
@@ -1121,10 +1138,18 @@ async function checkOnce() {
     if (!currentAsins.has(asin)) {
       delete state[key]
       pruned++
+      hasChanges = true  // Items were pruned
     }
   }
 
-  saveWatch(state)
+  // Only save if something actually changed
+  if (hasChanges) {
+    saveWatch(state)
+    if (config.debug) console.log(`${COLORS.blue}[${new Date().toLocaleTimeString()}] watch.json saved (changes detected)${COLORS.reset}`)
+  } else {
+    if (config.debug) console.log(`${COLORS.blue}[${new Date().toLocaleTimeString()}] watch.json not saved (no changes)${COLORS.reset}`)
+  }
+
   const pruneMsg = pruned > 0 ? `, pruned=${pruned}` : ''
   lastScanAt = Date.now()
   if (softBanUntil && Date.now() < softBanUntil) {
@@ -1288,10 +1313,10 @@ async function main() {
             const currentConfig = readConfig(configPath)
 
             // Update allowed fields
-            if (typeof updates.minutes_per_check === 'number' && updates.minutes_per_check >= 10) {
+            if (typeof updates.minutes_per_check === 'number' && updates.minutes_per_check > 0) {
               currentConfig.minutes_per_check = updates.minutes_per_check
             }
-            if (typeof updates.seconds_between_check === 'number' && updates.seconds_between_check >= 60) {
+            if (typeof updates.seconds_between_check === 'number' && updates.seconds_between_check > 0) {
               currentConfig.seconds_between_check = updates.seconds_between_check
             }
             if (typeof updates.tld === 'string' && updates.tld.length > 0) {
@@ -1321,6 +1346,10 @@ async function main() {
 
             // Write updated config back to file
             fs.writeFileSync(configPath, JSON.stringify(currentConfig, null, 2))
+
+            // Hot-reload config in memory so changes take effect on next scan cycle
+            config = readConfig(configPath)
+
             res.end(JSON.stringify({ ok: true }))
           } catch (e) {
             res.statusCode = 400

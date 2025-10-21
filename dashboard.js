@@ -496,8 +496,20 @@ const loadSettings = async () => {
   }
 
   // Populate form
-  document.getElementById('s_minutes').value = result.minutes_per_check || 10;
-  document.getElementById('s_seconds').value = result.seconds_between_check || 60;
+  // Convert scan interval (in minutes) to separate minutes and seconds
+  const scanIntervalMinutes = result.minutes_per_check || 10;
+  const scanMinutes = Math.floor(scanIntervalMinutes);
+  const scanSeconds = Math.round((scanIntervalMinutes - scanMinutes) * 60);
+  document.getElementById('s_scan_minutes').value = scanMinutes;
+  document.getElementById('s_scan_seconds').value = scanSeconds;
+
+  // Convert delay between items (in seconds) to separate minutes and seconds
+  const delaySeconds = result.seconds_between_check || 60;
+  const delayMinutes = Math.floor(delaySeconds / 60);
+  const delaySecondsRemainder = delaySeconds % 60;
+  document.getElementById('s_delay_minutes').value = delayMinutes;
+  document.getElementById('s_delay_seconds').value = delaySecondsRemainder;
+
   document.getElementById('s_tld').value = result.tld || 'com';
   document.getElementById('s_telegram_token').value = result.telegram_bot_token || '';
   document.getElementById('s_telegram_chat').value = result.telegram_chat_id || '';
@@ -517,9 +529,19 @@ document.getElementById('btn_save_settings').onclick = async () => {
   btn.disabled = true;
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
 
+  // Convert separate minutes and seconds fields to total minutes
+  const scanMinutes = Number(document.getElementById('s_scan_minutes').value) || 0;
+  const scanSeconds = Number(document.getElementById('s_scan_seconds').value) || 0;
+  const totalScanMinutes = scanMinutes + (scanSeconds / 60);
+
+  // Convert separate minutes and seconds fields to total seconds for delay
+  const delayMinutes = Number(document.getElementById('s_delay_minutes').value) || 0;
+  const delaySeconds = Number(document.getElementById('s_delay_seconds').value) || 0;
+  const totalDelaySeconds = (delayMinutes * 60) + delaySeconds;
+
   const formData = {
-    minutes_per_check: Number(document.getElementById('s_minutes').value),
-    seconds_between_check: Number(document.getElementById('s_seconds').value),
+    minutes_per_check: totalScanMinutes,
+    seconds_between_check: totalDelaySeconds,
     tld: document.getElementById('s_tld').value,
     telegram_bot_token: document.getElementById('s_telegram_token').value || undefined,
     telegram_chat_id: document.getElementById('s_telegram_chat').value || undefined,
@@ -540,7 +562,7 @@ document.getElementById('btn_save_settings').onclick = async () => {
   if (result.error) {
     showNotification('Failed to save settings: ' + result.error, 'error');
   } else {
-    showNotification('Settings saved! Restart monitor for changes to take effect.', 'success');
+    showNotification('Settings saved! Changes will take effect on the next scan cycle.', 'success');
   }
 };
 
@@ -608,9 +630,9 @@ const showHistoryModal = async (asin, title) => {
     return;
   }
 
-  // Calculate stats
-  const prices = history.map(h => h.price);
-  const currentPrice = prices[prices.length - 1];
+  // Calculate stats - convert to numbers
+  const prices = history.map(h => Number(h.price) || 0);
+  const currentPrice = prices[prices.length - 1] || 0;
   const highestPrice = Math.max(...prices);
   const lowestPrice = Math.min(...prices);
   const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
@@ -638,19 +660,34 @@ const renderPriceChart = (container, history, symbol) => {
   const mainData = history.filter(h => h.source === 'main');
   const warehouseData = history.filter(h => h.source === 'warehouse');
 
-  // Get min/max values
-  const allPrices = history.map(h => h.price);
+  // Get min/max values - convert to numbers
+  const allPrices = history.map(h => Number(h.price) || 0).filter(p => p > 0);
+
+  if (allPrices.length === 0) {
+    container.innerHTML = '<div class="chart-empty"><i class="fas fa-chart-line"></i><p>No valid price data</p></div>';
+    return;
+  }
+
   const minPrice = Math.min(...allPrices);
   const maxPrice = Math.max(...allPrices);
   const priceRange = maxPrice - minPrice;
-  const pricePadding = priceRange * 0.1;
+  const pricePadding = priceRange > 0 ? priceRange * 0.1 : maxPrice * 0.1;
 
   const minTs = Math.min(...history.map(h => h.ts));
   const maxTs = Math.max(...history.map(h => h.ts));
+  const tsRange = maxTs - minTs;
 
-  // Scale functions
-  const scaleX = (ts) => padding.left + ((ts - minTs) / (maxTs - minTs)) * chartWidth;
-  const scaleY = (price) => padding.top + chartHeight - ((price - minPrice + pricePadding) / (priceRange + pricePadding * 2)) * chartHeight;
+  // Scale functions with safety checks
+  const scaleX = (ts) => {
+    if (tsRange === 0) return padding.left + chartWidth / 2;
+    return padding.left + ((ts - minTs) / tsRange) * chartWidth;
+  };
+
+  const scaleY = (price) => {
+    const numPrice = Number(price) || 0;
+    if (priceRange === 0) return padding.top + chartHeight / 2;
+    return padding.top + chartHeight - ((numPrice - minPrice + pricePadding) / (priceRange + pricePadding * 2)) * chartHeight;
+  };
 
   // Create SVG
   let svg = '<svg width="' + width + '" height="' + height + '" style="background: var(--bg-tertiary);">';
