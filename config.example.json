@@ -4,7 +4,6 @@
   "seconds_between_check": 60, // Delay between each item (seconds) to be polite
   "tld": "ca",                 // Which Amazon site to use (examples: "ca", "com", "co.uk", "de")
   "url_params": {},            // Extra query parameters to append to all product URLs (usually leave empty)
-  "webhook_url": "ENTER_WEBHOOK_HERE",
   "telegram_bot_token": "",           // Telegram bot token from @BotFather (optional)
   "telegram_chat_id": "",             // Your Telegram chat ID (optional) 
   "default_warehouse": true,   // Prefer Amazon Warehouse offers when available (on by default)

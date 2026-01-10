@@ -261,7 +261,12 @@
 
     .item-card:hover { background: var(--bg-elevated); }
 
-    .item-header { display: flex; gap: 1rem; margin-bottom: 1rem; }
+    .item-card.paused {
+      opacity: 0.6;
+      border-color: var(--warning, #ff9800);
+    }
+
+    .item-header { display: flex; gap: 1rem; margin-bottom: 1rem; position: relative; }
 
     .item-image {
       width: 80px;

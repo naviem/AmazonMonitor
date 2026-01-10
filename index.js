@@ -813,6 +813,12 @@ async function checkOnce() {
   for (let i = 0; i < items.length; i++) {
     const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce, repeatAlerts } = items[i]
     try {
+      // Skip paused items
+      if (state[finalUrl]?.paused) {
+        const asin = extractAsin(finalUrl) || 'N/A'
+        if (config.debug) console.log(`${COLORS.yellow}[${new Date().toLocaleTimeString()}] [${i+1}/${items.length}] Skipping paused: ${label || asin}${COLORS.reset}`)
+        continue
+      }
       const page = await fetchPage(finalUrl)
       const $ = page && page.$
       if (!page || !$) {
@@ -858,6 +864,7 @@ async function checkOnce() {
         repeatAlerts: !!repeatAlerts,
         lowestSeen: state[finalUrl]?.lowestSeen || null,
         history: state[finalUrl]?.history || [],
+        paused: state[finalUrl]?.paused || false,
       }
 
       // Prepare data for both sources when warehouse tracking is enabled
@@ -1491,7 +1498,8 @@ async function main() {
               lowestSeen: st.lowestSeen || null,
               history: st.history || [],
               repeatAlerts: e.repeatAlerts || false,
-              webhookId: e.webhookId || null
+              webhookId: e.webhookId || null,
+              paused: st.paused || false
             }
           })
           res.end(JSON.stringify({ items }))
@@ -1631,6 +1639,15 @@ async function main() {
             })
             if (!updated) { res.statusCode = 404; return res.end(JSON.stringify({ error: 'ASIN not found in urls.txt' })) }
             fs.writeFileSync(p, nextLines.join('\n'))
+            // Handle paused state in watch.json
+            if (typeof data.paused === 'boolean') {
+              const state = loadWatch()
+              const urlKey = Object.keys(state).find(k => (k || '').includes(asin))
+              if (urlKey && state[urlKey]) {
+                state[urlKey].paused = data.paused
+                saveWatch(state)
+              }
+            }
             res.end(JSON.stringify({ ok: true }))
           } catch (e) {
             res.statusCode = 400

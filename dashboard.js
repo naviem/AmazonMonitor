@@ -121,9 +121,9 @@ const renderItems = (items) => {
           ? '<span class="price-change ' + priceChangeClass + '">' + (priceChange > 0 ? '+' : '') + formatPrice(Math.abs(priceChange), item.symbol) + '</span>' 
           : '';
         
-        return '<div class="item-card">' +
+        return '<div class="item-card' + (item.paused ? ' paused' : '') + '">' +
             '<div class="item-header">' +
-              (item.image ? '<img src="' + item.image + '" alt="Product" class="item-image" onerror="this.style.display=\'none\'">' : 
+              (item.image ? '<img src="' + item.image + '" alt="Product" class="item-image" onerror="this.style.display=\'none\'">' :
                 '<div class="item-image" style="background: var(--border); display: flex; align-items: center; justify-content: center;"><i class="fas fa-image" style="color: var(--text-secondary);"></i></div>') +
               '<div class="item-details">' +
                 '<div class="item-title">' + (item.label || item.title || '<span style="color: var(--text-muted); font-style: italic;">⏳ Fetching product details...</span>') + '</div>' +
@@ -132,11 +132,15 @@ const renderItems = (items) => {
                     '<i class="fas ' + (item.available ? 'fa-check' : 'fa-times') + '"></i>' +
                     (item.available ? 'In Stock' : 'Out of Stock') +
                   '</span>' +
+                  (item.paused ? '<span class="badge badge-warning"><i class="fas fa-pause"></i> Paused</span>' : '') +
                   (item.useWarehouse ? '<span class="badge badge-info"><i class="fas fa-warehouse"></i> Warehouse</span>' : '') +
                   (item.group ? '<span class="badge badge-warning">' + item.group + '</span>' : '') +
                   (item.threshold ? '<span class="badge badge-info">Max: ' + formatPrice(item.threshold, item.symbol) + '</span>' : '') +
                 '</div>' +
               '</div>' +
+              '<button class="btn btn-sm pause-btn" data-asin="' + item.asin + '" data-paused="' + (item.paused ? 'true' : 'false') + '" title="' + (item.paused ? 'Resume scanning' : 'Pause scanning') + '" style="position: absolute; top: 10px; right: 10px; padding: 6px 10px; background: ' + (item.paused ? 'var(--success)' : 'var(--warning, #ff9800)') + '; border: none; border-radius: 4px;">' +
+                '<i class="fas ' + (item.paused ? 'fa-play' : 'fa-pause') + '"></i>' +
+              '</button>' +
             '</div>' +
             
             '<div class="price-info">' +
@@ -241,6 +245,27 @@ const bindItemEvents = () => {
         showNotification('Test failed: ' + result.error, 'error');
       } else {
         showNotification('Test notification sent!', 'success');
+      }
+    };
+  });
+
+  document.querySelectorAll('.pause-btn').forEach(btn => {
+    btn.onclick = async () => {
+      const asin = btn.dataset.asin;
+      const isPaused = btn.dataset.paused === 'true';
+      btn.disabled = true;
+
+      const result = await api('PUT', '/api/items', {
+        asin,
+        paused: !isPaused
+      });
+
+      if (result.error) {
+        showNotification('Failed to update item: ' + result.error, 'error');
+        btn.disabled = false;
+      } else {
+        showNotification(isPaused ? 'Resumed scanning' : 'Paused scanning', 'success');
+        loadData();
       }
     };
   });
