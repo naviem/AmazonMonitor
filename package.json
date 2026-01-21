@@ -5,11 +5,9 @@
   "type": "module",
   "description": "Minimal Amazon price monitor (HTTP + Cheerio + Discord webhook)",
   "scripts": {
-    "start": "node index.js"
+    "start": "node amazonmonitor.js"
   },
   "dependencies": {
-    "cheerio": "1.0.0-rc.10"
+    "cheerio": "^1.0.0-rc.10"
   }
 }
-
-

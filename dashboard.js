@@ -841,20 +841,8 @@ const renderPriceChart = (container, history, symbol) => {
 const showEditModal = async (item) => {
   const modal = document.getElementById('editModal');
 
-  // Populate webhooks dropdown in edit modal
-  const webhookSelect = document.getElementById('edit_webhook');
-  const webhooksResult = await api('GET', '/api/webhooks');
-  if (!webhooksResult.error && webhooksResult.webhooks && webhooksResult.webhooks.length > 0) {
-    webhookSelect.innerHTML = '';
-    webhooksResult.webhooks.forEach(wh => {
-      const option = document.createElement('option');
-      option.value = wh.id;
-      option.textContent = wh.name + (wh.isDefault ? ' (Default)' : '');
-      webhookSelect.appendChild(option);
-    });
-  } else {
-    webhookSelect.innerHTML = '<option value="">No webhooks configured</option>';
-  }
+  // Populate webhook checkboxes in edit modal
+  await populateWebhookDropdown();
 
   // Populate form with current values
   document.getElementById('edit_asin').value = item.asin;

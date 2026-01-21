@@ -1167,11 +1167,9 @@ async function checkOnce() {
 }
 
 async function main() {
-  // initial seed + loop
   printBanner()
-  await checkOnce()
-  setInterval(checkOnce, minutesPerCheck * 60 * 1000)
 
+  // Start web server immediately (before first scan)
   if (config.server) {
     const port = Number(config.port || 3000)
     const server = http.createServer((req, res) => {
@@ -1721,6 +1719,10 @@ async function main() {
       console.log(`${COLORS.cyan}Server running at http://127.0.0.1:${port}${COLORS.reset}`)
     })
   }
+
+  // Run first scan and start interval (after server is up)
+  await checkOnce()
+  setInterval(checkOnce, minutesPerCheck * 60 * 1000)
 }
 
 main().catch(err => {
