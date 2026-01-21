@@ -315,10 +315,10 @@ document.getElementById('addForm').onsubmit = async (e) => {
   if (isLoading) return;
 
   // Check if webhooks are configured
-  const webhookId = document.getElementById('f_webhook').value;
-  const webhookSelect = document.getElementById('f_webhook');
+  const webhookIds = getSelectedWebhookIds('f_webhook_container');
+  const container = document.getElementById('f_webhook_container');
 
-  if (!webhookId || webhookSelect.options[0]?.textContent === 'No webhooks configured') {
+  if (webhookIds.length === 0 && container?.textContent?.includes('No webhooks configured')) {
     showNotification('Please add a webhook in the Webhooks tab before adding products', 'error');
     // Switch to webhooks tab
     document.querySelector('[data-tab="webhooks"]').click();
@@ -343,7 +343,7 @@ document.getElementById('addForm').onsubmit = async (e) => {
     warehouse: document.getElementById('f_warehouse').value,
     alerts: document.getElementById('f_alerts').value || undefined,
     repeatAlerts: notifyMode === 'repeat' ? 'on' : undefined,
-    webhookId: webhookId
+    webhookIds: webhookIds.length > 0 ? webhookIds : undefined
   };
 
   // Remove undefined values
@@ -430,22 +430,29 @@ const loadWebhooks = async () => {
 
   const webhooks = result.webhooks || [];
   if (webhooks.length === 0) {
-    container.innerHTML = '<div class="empty-state"><i class="fas fa-bell-slash"></i><h3>No Webhooks Configured</h3><p>Add a Discord webhook to start receiving notifications</p></div>';
+    container.innerHTML = '<div class="empty-state"><i class="fas fa-bell-slash"></i><h3>No Webhooks Configured</h3><p>Add a Discord or Telegram webhook to start receiving notifications</p></div>';
     return;
   }
 
-  container.innerHTML = webhooks.map((wh, idx) =>
-    '<div class="webhook-card">' +
+  container.innerHTML = webhooks.map((wh, idx) => {
+    const type = wh.type || 'discord';
+    const typeIcon = type === 'telegram' ? 'fab fa-telegram' : 'fab fa-discord';
+    const typeLabel = type === 'telegram' ? 'Telegram' : 'Discord';
+    const details = type === 'telegram'
+      ? 'Chat ID: ' + (wh.chatId || 'N/A')
+      : (wh.url || '').substring(0, 50) + '...';
+
+    return '<div class="webhook-card">' +
       '<div class="webhook-info">' +
-        '<div class="webhook-name">' + wh.name + (wh.isDefault ? ' <span class="badge badge-success">Default</span>' : '') + '</div>' +
-        '<div class="webhook-url">' + wh.url + '</div>' +
+        '<div class="webhook-name"><i class="' + typeIcon + '" style="margin-right: 0.5rem; color: ' + (type === 'telegram' ? '#0088cc' : '#5865F2') + ';"></i>' + wh.name + (wh.isDefault ? ' <span class="badge badge-success">Default</span>' : '') + '</div>' +
+        '<div class="webhook-url">' + details + '</div>' +
       '</div>' +
       '<div class="webhook-actions">' +
         (!wh.isDefault ? '<button class="btn btn-sm btn-outline" onclick="setDefaultWebhook(\'' + wh.id + '\')"><i class="fas fa-star"></i> Set Default</button>' : '') +
         '<button class="btn btn-sm btn-danger" onclick="deleteWebhook(\'' + wh.id + '\')"><i class="fas fa-trash"></i></button>' +
       '</div>' +
-    '</div>'
-  ).join('');
+    '</div>';
+  }).join('');
 };
 
 window.setDefaultWebhook = async (id) => {
@@ -477,6 +484,9 @@ window.deleteWebhook = async (id) => {
 document.getElementById('btn_add_webhook').onclick = () => {
   document.getElementById('webhook_form').style.display = 'block';
   document.getElementById('wh_name').focus();
+  // Reset to Discord by default
+  document.getElementById('wh_type').value = 'discord';
+  updateWebhookFormFields();
 };
 
 document.getElementById('btn_cancel_webhook').onclick = () => {
@@ -484,13 +494,44 @@ document.getElementById('btn_cancel_webhook').onclick = () => {
   document.getElementById('webhook_form').style.display = 'none';
 };
 
+// Toggle form fields based on webhook type
+const updateWebhookFormFields = () => {
+  const type = document.getElementById('wh_type').value;
+  const discordFields = document.getElementById('discord_fields');
+  const telegramFields = document.getElementById('telegram_fields');
+
+  if (type === 'telegram') {
+    discordFields.style.display = 'none';
+    telegramFields.style.display = 'grid';
+    document.getElementById('wh_url').removeAttribute('required');
+    document.getElementById('wh_bot_token').setAttribute('required', '');
+    document.getElementById('wh_chat_id').setAttribute('required', '');
+  } else {
+    discordFields.style.display = 'grid';
+    telegramFields.style.display = 'none';
+    document.getElementById('wh_url').setAttribute('required', '');
+    document.getElementById('wh_bot_token').removeAttribute('required');
+    document.getElementById('wh_chat_id').removeAttribute('required');
+  }
+};
+
+document.getElementById('wh_type').onchange = updateWebhookFormFields;
+
 document.getElementById('addWebhookForm').onsubmit = async (e) => {
   e.preventDefault();
 
+  const type = document.getElementById('wh_type').value;
   const formData = {
     name: document.getElementById('wh_name').value.trim(),
-    url: document.getElementById('wh_url').value.trim()
+    type: type
   };
+
+  if (type === 'telegram') {
+    formData.botToken = document.getElementById('wh_bot_token').value.trim();
+    formData.chatId = document.getElementById('wh_chat_id').value.trim();
+  } else {
+    formData.url = document.getElementById('wh_url').value.trim();
+  }
 
   const result = await api('POST', '/api/webhooks', formData);
   if (result.error) {
@@ -536,8 +577,6 @@ const loadSettings = async () => {
   document.getElementById('s_delay_seconds').value = delaySecondsRemainder;
 
   document.getElementById('s_tld').value = result.tld || 'com';
-  document.getElementById('s_telegram_token').value = result.telegram_bot_token || '';
-  document.getElementById('s_telegram_chat').value = result.telegram_chat_id || '';
   document.getElementById('s_history_days').value = result.history_days || 7;
   document.getElementById('s_history_limit').value = result.history_limit || 2000;
   document.getElementById('s_history_noise').checked = result.history_noise_protection !== false;
@@ -568,8 +607,6 @@ document.getElementById('btn_save_settings').onclick = async () => {
     minutes_per_check: totalScanMinutes,
     seconds_between_check: totalDelaySeconds,
     tld: document.getElementById('s_tld').value,
-    telegram_bot_token: document.getElementById('s_telegram_token').value || undefined,
-    telegram_chat_id: document.getElementById('s_telegram_chat').value || undefined,
     history_days: Number(document.getElementById('s_history_days').value),
     history_limit: Number(document.getElementById('s_history_limit').value),
     history_noise_protection: document.getElementById('s_history_noise').checked,
@@ -591,36 +628,44 @@ document.getElementById('btn_save_settings').onclick = async () => {
   }
 };
 
-// Populate webhook dropdown
+// Populate webhook checkboxes (multi-select)
 const populateWebhookDropdown = async () => {
-  const select = document.getElementById('f_webhook');
-  if (!select) return;
+  // Populate both add form and edit form webhook containers
+  const containers = [
+    document.getElementById('f_webhook_container'),
+    document.getElementById('edit_webhook_container')
+  ];
 
   const result = await api('GET', '/api/webhooks');
-  if (result.error || !result.webhooks) {
-    select.innerHTML = '<option value="">No webhooks configured</option>';
-    return;
-  }
 
-  if (result.webhooks.length === 0) {
-    select.innerHTML = '<option value="">No webhooks configured</option>';
-    return;
-  }
+  containers.forEach(container => {
+    if (!container) return;
 
-  // Clear existing options
-  select.innerHTML = '';
-
-  // Add each webhook as an option
-  result.webhooks.forEach((wh, index) => {
-    const option = document.createElement('option');
-    option.value = wh.id;
-    option.textContent = wh.name + (wh.isDefault ? ' (Default)' : '');
-    // Select the first (or default) webhook by default
-    if (wh.isDefault || index === 0) {
-      option.selected = true;
+    if (result.error || !result.webhooks || result.webhooks.length === 0) {
+      container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.875rem;">No webhooks configured. Add one in the Webhooks tab.</div>';
+      return;
     }
-    select.appendChild(option);
+
+    // Create checkbox list for multi-select
+    container.innerHTML = result.webhooks.map(wh => {
+      const type = wh.type || 'discord';
+      const icon = type === 'telegram' ? 'fab fa-telegram' : 'fab fa-discord';
+      const color = type === 'telegram' ? '#0088cc' : '#5865F2';
+      return '<label style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; cursor: pointer;">' +
+        '<input type="checkbox" class="webhook-checkbox" value="' + wh.id + '"' + (wh.isDefault ? ' checked' : '') + ' style="width: auto;">' +
+        '<i class="' + icon + '" style="color: ' + color + ';"></i>' +
+        '<span>' + wh.name + (wh.isDefault ? ' (Default)' : '') + '</span>' +
+      '</label>';
+    }).join('');
   });
+};
+
+// Helper to get selected webhook IDs from checkboxes
+const getSelectedWebhookIds = (containerId) => {
+  const container = document.getElementById(containerId);
+  if (!container) return [];
+  const checkboxes = container.querySelectorAll('.webhook-checkbox:checked');
+  return Array.from(checkboxes).map(cb => cb.value);
 };
 
 // Price History Modal
@@ -821,9 +866,16 @@ const showEditModal = async (item) => {
   document.getElementById('edit_warehouse').value = item.warehouse || 'on';
   document.getElementById('edit_alerts').value = item.alerts === 'both' ? '' : (item.alerts || '');
 
-  // Set webhook dropdown - need to wait for it to be populated
+  // Set webhook checkboxes - need to wait for container to be populated
   setTimeout(() => {
-    document.getElementById('edit_webhook').value = item.webhookId || '';
+    const container = document.getElementById('edit_webhook_container');
+    if (container) {
+      const checkboxes = container.querySelectorAll('.webhook-checkbox');
+      const selectedIds = item.webhookIds || (item.webhookId ? [item.webhookId] : []);
+      checkboxes.forEach(cb => {
+        cb.checked = selectedIds.map(String).includes(String(cb.value));
+      });
+    }
   }, 100);
 
   // Set notification mode
@@ -849,18 +901,18 @@ document.getElementById('editForm').onsubmit = async (e) => {
   const asin = document.getElementById('edit_asin').value;
   const notifyMode = document.querySelector('input[name="edit_notify_mode"]:checked').value;
 
+  const webhookIds = getSelectedWebhookIds('edit_webhook_container');
   const formData = {
     asin: asin,
-    label: document.getElementById('edit_label').value.trim() || '',
-    group: document.getElementById('edit_group').value.trim() || '',
+    label: document.getElementById('edit_label').value.trim(),
+    group: document.getElementById('edit_group').value.trim(),
     threshold: document.getElementById('edit_threshold').value ? Number(document.getElementById('edit_threshold').value) : null,
     thresholdDrop: document.getElementById('edit_drop').value ? Number(document.getElementById('edit_drop').value) : null,
-    baseline: document.getElementById('edit_base').value || '',
-    warehouse: document.getElementById('edit_warehouse').value || 'on',
-    alerts: document.getElementById('edit_alerts').value || '',
+    baseline: document.getElementById('edit_base').value || null,
+    warehouse: document.getElementById('edit_warehouse').value,
+    alerts: document.getElementById('edit_alerts').value,
     repeatAlerts: notifyMode === 'repeat' ? 'on' : 'off',
-    notifyOnce: false,
-    webhookId: document.getElementById('edit_webhook').value || ''
+    webhookIds: webhookIds
   };
 
   const result = await api('PUT', '/api/items', formData);

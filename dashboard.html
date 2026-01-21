@@ -1053,10 +1053,10 @@
 
         <div class="form-group">
           <div>
-            <label>Discord Webhook <span class="tooltip" data-tooltip="Choose which Discord webhook will receive alerts for this product. Manage webhooks in the Webhooks tab."><i class="fas fa-info-circle"></i></span></label>
-            <select id="f_webhook" class="form-control" required>
-              <option value="">No webhooks configured</option>
-            </select>
+            <label>Notifications <span class="tooltip" data-tooltip="Select which webhooks will receive alerts for this product. You can select multiple."><i class="fas fa-info-circle"></i></span></label>
+            <div id="f_webhook_container" class="form-control" style="max-height: 150px; overflow-y: auto; padding: 0.75rem;">
+              No webhooks configured
+            </div>
           </div>
         </div>
 
@@ -1181,8 +1181,29 @@
                 <input type="text" id="wh_name" class="form-control" placeholder="e.g., Main Alerts, Deals Channel" required>
               </div>
               <div>
+                <label>Type *</label>
+                <select id="wh_type" class="form-control" required>
+                  <option value="discord">Discord</option>
+                  <option value="telegram">Telegram</option>
+                </select>
+              </div>
+            </div>
+            <!-- Discord fields -->
+            <div id="discord_fields" class="form-group">
+              <div style="grid-column: 1 / -1;">
                 <label>Discord Webhook URL *</label>
-                <input type="url" id="wh_url" class="form-control" placeholder="https://discord.com/api/webhooks/..." required>
+                <input type="url" id="wh_url" class="form-control" placeholder="https://discord.com/api/webhooks/...">
+              </div>
+            </div>
+            <!-- Telegram fields (hidden by default) -->
+            <div id="telegram_fields" class="form-group" style="display: none;">
+              <div>
+                <label>Bot Token *</label>
+                <input type="text" id="wh_bot_token" class="form-control" placeholder="123456789:ABCdefGHI...">
+              </div>
+              <div>
+                <label>Chat ID *</label>
+                <input type="text" id="wh_chat_id" class="form-control" placeholder="-1001234567890 or @channelname">
               </div>
             </div>
             <div class="form-group" style="grid-template-columns: 1fr;">
@@ -1234,18 +1255,6 @@
             <div>
               <label>Delay Between Items - Seconds <span class="tooltip" data-tooltip="Seconds portion of delay between items. Default: 60 seconds (1 minute). Helps avoid rate limiting."><i class="fas fa-info-circle"></i></span></label>
               <input type="number" id="s_delay_seconds" class="form-control" min="0" max="59" step="1" placeholder="e.g., 0" required>
-            </div>
-          </div>
-
-          <h3 style="margin: 1.5rem 0 1rem; font-size: 1rem; color: var(--text-primary);">Telegram Settings (Optional)</h3>
-          <div class="form-group">
-            <div>
-              <label>Telegram Bot Token</label>
-              <input type="text" id="s_telegram_token" class="form-control" placeholder="Bot token from @BotFather">
-            </div>
-            <div>
-              <label>Telegram Chat ID</label>
-              <input type="text" id="s_telegram_chat" class="form-control" placeholder="Your chat ID">
             </div>
           </div>
 
@@ -1386,10 +1395,10 @@
 
           <div class="form-group">
             <div>
-              <label>Discord Webhook</label>
-              <select id="edit_webhook" class="form-control" required>
-                <option value="">No webhooks configured</option>
-              </select>
+              <label>Notifications</label>
+              <div id="edit_webhook_container" class="form-control" style="max-height: 150px; overflow-y: auto; padding: 0.75rem;">
+                No webhooks configured
+              </div>
             </div>
           </div>
 

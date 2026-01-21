@@ -68,8 +68,8 @@ let config = readConfig(new URL('./config.json', import.meta.url))
   - history.outlier_confirm_scans: require N consecutive scans to accept a sudden change
 */
 
-// Backward compatible default for Warehouse tracking
-const DEFAULT_WAREHOUSE = !!(Object.prototype.hasOwnProperty.call(config, 'default_warehouse') ? config.default_warehouse : config.warehouse)
+// Default for Warehouse tracking
+const DEFAULT_WAREHOUSE = !!config.default_warehouse
 const DEFAULT_MINUTES = 10
 const DEFAULT_DELAY_SEC = 60
 const minutesPerCheck = Number.isFinite(Number(config.minutes_per_check)) && Number(config.minutes_per_check) > 0
@@ -79,9 +79,8 @@ const secondsBetweenCheck = Number.isFinite(Number(config.seconds_between_check)
   ? Number(config.seconds_between_check)
   : DEFAULT_DELAY_SEC
 
-// User‑agent rotation defaults
+// User-agent rotation defaults
 const UA_STRATEGY = (config.user_agent_strategy || 'sticky-per-item')
-const ROTATE_ON_SOFTBAN = config.rotate_on_soft_ban !== false
 const CUSTOM_UA = Array.isArray(config.user_agents) && config.user_agents.length > 0 ? config.user_agents : null
 
 function log(msg) {
@@ -192,7 +191,6 @@ const historyCfg = {
 // Soft-ban cooldown end timestamp (ms since epoch); when > now, scans are skipped
 let softBanUntil = 0
 let lastScanAt = 0
-const HISTORY_MAX = 20
 
 function randomFrom(arr){ return arr[Math.floor(Math.random()*arr.length)] }
 
@@ -425,6 +423,36 @@ function priceFormat(p) {
   return parseFloat(p).toFixed(2)
 }
 
+// Helper to parse warehouse offer from a single AOD offer element
+function parseWarehouseOffer($ctx, offer, defaultSymbol) {
+  const soldBy = offer.find('[id*="aod-offer-soldBy"], .aod-offer-soldBy')
+  let seller = soldBy.find('a').last().text().trim()
+  if (!seller) {
+    const smalls = soldBy.find('.a-size-small').toArray().map(el => $ctx(el).text().trim()).filter(Boolean)
+    seller = smalls[smalls.length - 1] || ''
+  }
+  if (!seller) {
+    const raw = soldBy.text().trim()
+    const m = raw.replace(/\s+/g, ' ').match(/sold by[:\s]*([^|\n]+?)(?:\s{2,}|$)/i)
+    if (m) seller = m[1].trim()
+  }
+  const s = (seller || '').toLowerCase()
+  if (!s.includes('amazon warehouse') && !s.includes('warehouse deals') && !s.includes('warehouse')) {
+    return null
+  }
+  const priceText = offer.find('#aod-offer-price .aok-offscreen, #aod-offer-price .a-offscreen, .aod-offer-price .aok-offscreen, .aod-offer-price .a-offscreen').first().text().trim()
+  const priceRaw = priceText || offerPriceFallback(offer)
+  const priceFmt = priceRaw ? priceFormat(priceRaw) : ''
+  const priceVal = priceFmt ? parseFloat(priceFmt) : 0
+  return {
+    seller: seller || 'Amazon Warehouse',
+    price: priceFmt,
+    lastPrice: priceVal,
+    symbol: (priceRaw || '').replace(/[,.]+/g, '').replace(/[\d a-zA-Z]/g, '') || defaultSymbol,
+    available: priceVal > 0,
+  }
+}
+
 async function parseItem($, url, includeWarehouse = DEFAULT_WAREHOUSE) {
   const priceElms = [
     $('#priceblock_ourprice').text().trim(),
@@ -464,34 +492,9 @@ async function parseItem($, url, includeWarehouse = DEFAULT_WAREHOUSE) {
     const $nodes = $('#aod-offer, .aod-offer')
     $nodes.each(function () {
       if (whDom) return
-      const offer = $(this)
-      const soldBy = offer.find('[id*="aod-offer-soldBy"], .aod-offer-soldBy')
-      let seller = soldBy.find('a').last().text().trim()
-      if (!seller) {
-        const smalls = soldBy.find('.a-size-small').toArray().map(el => $(el).text().trim()).filter(Boolean)
-        seller = smalls[smalls.length - 1] || ''
-      }
-      if (!seller) {
-        const raw = soldBy.text().trim()
-        const m = raw.replace(/\s+/g, ' ').match(/sold by[:\s]*([^|\n]+?)(?:\s{2,}|$)/i)
-        if (m) seller = m[1].trim()
-      }
-      const s = (seller || '').toLowerCase()
-      if (s.includes('amazon warehouse') || s.includes('warehouse deals') || s.includes('warehouse')) {
-        const priceText = offer.find('#aod-offer-price .aok-offscreen, #aod-offer-price .a-offscreen, .aod-offer-price .aok-offscreen, .aod-offer-price .a-offscreen').first().text().trim()
-        const priceRaw = priceText || offerPriceFallback(offer)
-        const priceFmt = priceRaw ? priceFormat(priceRaw) : ''
-        const priceVal = priceFmt ? parseFloat(priceFmt) : 0
-        whDom = {
-          seller: seller || 'Amazon Warehouse',
-          price: priceFmt,
-          lastPrice: priceVal,
-          symbol: (priceRaw || '').replace(/[,.]+/g, '').replace(/[\d a-zA-Z]/g, '') || symbol,
-          available: priceVal > 0,
-        }
-      }
+      const result = parseWarehouseOffer($, $(this), symbol)
+      if (result) whDom = result
     })
-    // Reduce noisy traces by moving detailed AOD counts under config.trace instead of debug
     if (config.trace) dbg(`AOD offers in DOM: ${$nodes.length}`)
     if (whDom) {
       dbg(`Matched Warehouse (DOM): ${whDom.seller} @ ${whDom.price || 'N/A'}`)
@@ -508,31 +511,8 @@ async function parseItem($, url, includeWarehouse = DEFAULT_WAREHOUSE) {
         if (config.trace) dbg(`AOD offers via ajax: ${$items.length}`)
         $items.each(function () {
           if (whAjax) return
-          const offer = $aod(this)
-          const soldBy = offer.find('[id*="aod-offer-soldBy"], .aod-offer-soldBy')
-          let seller = soldBy.find('a').last().text().trim()
-          if (!seller) {
-            const smalls = soldBy.find('.a-size-small').toArray().map(el => $aod(el).text().trim()).filter(Boolean)
-            seller = smalls[smalls.length - 1] || ''
-          }
-          if (!seller) {
-            const raw = soldBy.text().trim()
-            const m = raw.replace(/\s+/g, ' ').match(/sold by[:\s]*([^|\n]+?)(?:\s{2,}|$)/i)
-            if (m) seller = m[1].trim()
-          }
-          const s = (seller || '').toLowerCase()
-          if (s.includes('amazon warehouse') || s.includes('warehouse deals') || s.includes('warehouse')) {
-            const priceText = offer.find('#aod-offer-price .aok-offscreen, #aod-offer-price .a-offscreen, .aod-offer-price .aok-offscreen, .aod-offer-price .a-offscreen').first().text().trim()
-            const priceRaw = priceText || offerPriceFallback(offer)
-          const whPrice2 = priceRaw ? priceFormat(priceRaw) : ''
-          whAjax = {
-              seller: seller || 'Amazon Warehouse',
-              price: whPrice2,
-              lastPrice: whPrice2 ? parseFloat(whPrice2) : 0,
-            symbol: (priceRaw || '').replace(/[,.]+/g, '').replace(/[\d a-zA-Z]/g, '') || symbol,
-            available: (whPrice2 ? parseFloat(whPrice2) : 0) > 0,
-            }
-          }
+          const result = parseWarehouseOffer($aod, $aod(this), symbol)
+          if (result) whAjax = result
         })
         if (whAjax) {
           dbg(`Matched Warehouse (ajax): ${whAjax.seller} @ ${whAjax.price || 'N/A'}`)
@@ -581,7 +561,7 @@ function readUrlsFile() {
     let notifyOnceToken = null
     let groupToken = null
     let repeatAlertsToken = null
-    let webhookIdToken = null
+    let webhookIdsToken = null
     for (let i = 1; i < parts.length; i++) {
       const token = parts[i]
       if (!token) continue
@@ -621,8 +601,8 @@ function readUrlsFile() {
         groupToken = val
       } else if (key === 'repeat_alerts' || key === 'repeat') {
         repeatAlertsToken = val
-      } else if (key === 'webhook' || key === 'webhook_id') {
-        webhookIdToken = val
+      } else if (key === 'webhook' || key === 'webhook_id' || key === 'webhooks') {
+        webhookIdsToken = val
       }
     }
     const label = labelToken ? labelToken.replace(/^"|"$/g, '') : null
@@ -635,8 +615,11 @@ function readUrlsFile() {
     const repeatAlerts = ['on', 'true', '1', 'yes', 'y'].includes(rv) ? true
       : ['off', 'false', '0', 'no', 'n'].includes(rv) ? false
       : false
-    const webhookId = webhookIdToken ? String(webhookIdToken).replace(/^"|"$/g, '') : null
-    entries.push({ value, threshold: threshold ?? null, thresholdDrop: thresholdDrop ?? null, baseline: baseline || null, useWarehouse, allowStockAlerts, allowPriceAlerts, label, group, notifyOnce, repeatAlerts, webhookId })
+    // Parse webhook IDs (supports comma-separated: webhook=1,2,3)
+    const webhookIds = webhookIdsToken
+      ? String(webhookIdsToken).replace(/^"|"$/g, '').split(',').map(id => id.trim()).filter(Boolean)
+      : null
+    entries.push({ value, threshold: threshold ?? null, thresholdDrop: thresholdDrop ?? null, baseline: baseline || null, useWarehouse, allowStockAlerts, allowPriceAlerts, label, group, notifyOnce, repeatAlerts, webhookIds })
   }
   return entries
 }
@@ -658,16 +641,7 @@ function saveWatch(obj) {
 function loadWebhooks() {
   const p = new URL('./webhooks.json', import.meta.url)
   if (!fs.existsSync(p)) {
-    // Initialize with default webhook from config if present
     const initial = { webhooks: [], nextId: 1 }
-    if (config.webhook_url) {
-      initial.webhooks.push({
-        id: 'default',
-        name: 'Default Webhook',
-        url: config.webhook_url,
-        isDefault: true
-      })
-    }
     fs.writeFileSync(p, JSON.stringify(initial, null, 2))
     return initial
   }
@@ -679,52 +653,85 @@ function saveWebhooks(obj) {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2))
 }
 
-async function postWebhook(embed) {
-  if (!config.webhook_url) return
-  const payload = {
-    username: 'AmazonMonitor',
-    embeds: [embed]
-  }
-  await fetch(config.webhook_url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  })
-}
+// Unified notification function - sends to Discord and/or Telegram based on webhook type
+async function sendNotification(notification, webhookIds = null) {
+  const data = loadWebhooks()
+  const allWebhooks = data.webhooks || []
 
-async function postTelegram(message, imageUrl = null) {
-  if (!config.telegram_bot_token || !config.telegram_chat_id) return
-  
-  const baseUrl = `https://api.telegram.org/bot${config.telegram_bot_token}`
-  
-  try {
-    if (imageUrl) {
-      // Send photo with caption
-      await fetch(`${baseUrl}/sendPhoto`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: config.telegram_chat_id,
-          photo: imageUrl,
-          caption: message,
-          parse_mode: 'HTML'
-        })
-      })
-    } else {
-      // Send text message
-      await fetch(`${baseUrl}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: config.telegram_chat_id,
-          text: message,
-          parse_mode: 'HTML'
-        })
-      })
-    }
-  } catch (error) {
-    dbg(`Telegram notification failed: ${error.message}`)
+  // Determine which webhooks to use
+  let targetWebhooks = []
+
+  if (webhookIds && webhookIds.length > 0) {
+    // Use specified webhooks
+    const idList = Array.isArray(webhookIds) ? webhookIds : [webhookIds]
+    targetWebhooks = allWebhooks.filter(w => idList.map(String).includes(String(w.id)))
   }
+
+  if (targetWebhooks.length === 0) {
+    // Fall back to default webhook(s)
+    const defaults = allWebhooks.filter(w => w.isDefault)
+    if (defaults.length > 0) {
+      targetWebhooks = defaults
+    } else if (allWebhooks.length > 0) {
+      // Use first webhook if no default set
+      targetWebhooks = [allWebhooks[0]]
+    }
+  }
+
+  if (targetWebhooks.length === 0) return 0
+
+  let sent = 0
+  for (const webhook of targetWebhooks) {
+    try {
+      const type = webhook.type || 'discord'
+
+      if (type === 'discord') {
+        const embed = {
+          title: notification.title,
+          description: notification.description,
+          color: notification.color || 0x0099ff,
+          thumbnail: notification.image ? { url: notification.image } : undefined
+        }
+        await fetch(webhook.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: 'AmazonMonitor', embeds: [embed] })
+        })
+        sent++
+      } else if (type === 'telegram') {
+        const baseUrl = `https://api.telegram.org/bot${webhook.botToken}`
+        // Convert notification to Telegram HTML format
+        const message = `<b>${notification.title}</b>\n\n${notification.telegramText || notification.description.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')}`
+
+        if (notification.image) {
+          await fetch(`${baseUrl}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: webhook.chatId,
+              photo: notification.image,
+              caption: message,
+              parse_mode: 'HTML'
+            })
+          })
+        } else {
+          await fetch(`${baseUrl}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: webhook.chatId,
+              text: message,
+              parse_mode: 'HTML'
+            })
+          })
+        }
+        sent++
+      }
+    } catch (error) {
+      dbg(`Notification to "${webhook.name}" (${webhook.type || 'discord'}) failed: ${error.message}`)
+    }
+  }
+  return sent
 }
 
 async function searchAmazonProducts(query) {
@@ -777,8 +784,11 @@ async function checkOnce() {
     log(`Scan skipped: soft-ban cooldown active. Next attempt in ~${mins} min`)
     return
   }
-  if (!config.webhook_url) {
-    log('Error: No webhook_url configured. Set config.webhook_url to receive notifications.')
+  // Check if any webhook is configured
+  const webhooksData = loadWebhooks()
+  const hasWebhooks = webhooksData.webhooks && webhooksData.webhooks.length > 0
+  if (!hasWebhooks) {
+    log('Error: No webhook configured. Add a webhook in the Webhooks tab to receive notifications.')
   }
   const result = readUrlsFile()
   const entries = Array.isArray(result) ? result : result.entries
@@ -798,6 +808,7 @@ async function checkOnce() {
     group: e.group || null,
     notifyOnce: !!e.notifyOnce,
     repeatAlerts: !!e.repeatAlerts,
+    webhookIds: e.webhookIds || null,
   }))
   if (items.length === 0) {
     log('Scan skipped: no URLs found in urls.txt')
@@ -811,7 +822,7 @@ async function checkOnce() {
   let hasChanges = false  // Track if watch.json needs to be saved
 
   for (let i = 0; i < items.length; i++) {
-    const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce, repeatAlerts } = items[i]
+    const { finalUrl, threshold, useWarehouse, allowStockAlerts, allowPriceAlerts, label, notifyOnce, repeatAlerts, webhookIds } = items[i]
     try {
       // Skip paused items
       if (state[finalUrl]?.paused) {
@@ -1022,16 +1033,14 @@ async function checkOnce() {
         if (allowStockAlerts && mainIsBackInStock && mainPassesThreshold) {
           if (!notifyOnce || mainSig !== lastMainSig || (repeatAlerts && mainNewAvail && mainPassesThreshold)) {
             const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
-            const embed = {
+            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
+            await sendNotification({
               title: `Back in stock for "${info.title || 'N/A'}"`,
               description: `Current Price: ${info.symbol}${mainNewPrice.toFixed(2)}\n\n[View Product](${finalUrl})${offerLink}`,
-              thumbnail: info.image ? { url: info.image } : undefined,
-              color: 0x0099ff,
-            }
-            await postWebhook(embed)
-            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
-            const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>${offerLinkTg}`
-            await postTelegram(telegramMessage, info.image)
+              telegramText: `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>${offerLinkTg}`,
+              image: info.image,
+              color: 0x0099ff
+            }, webhookIds)
             sent++
             state[finalUrl].lastNotifiedMain = mainSig
           }
@@ -1041,24 +1050,20 @@ async function checkOnce() {
           if (!notifyOnce || mainSig !== lastMainSig || (repeatAlerts && mainNewAvail && mainPassesThreshold)) {
             const isFirstDetection = !prev || mainPrevPrice === 0
             const diff = isFirstDetection ? '0.00' : (mainPrevPrice - mainNewPrice).toFixed(2)
+            const discount = isFirstDetection ? '0' : ((mainPrevPrice - mainNewPrice) / mainPrevPrice * 100).toFixed(1)
             const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
-            const embed = {
+            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
+            await sendNotification({
               title: `Price alert for "${info.title || 'N/A'}"`,
               description: isFirstDetection
                 ? `Current Price: ${info.symbol}${mainNewPrice.toFixed(2)}\n\n[View Product](${finalUrl})${offerLink}`
                 : `Old Price: ${info.symbol}${mainPrevPrice.toFixed(2)}\nNew Price: ${info.symbol}${mainNewPrice.toFixed(2)}\nDiff: ${info.symbol}${diff}\n\n[View Product](${finalUrl})${offerLink}`,
-              thumbnail: info.image ? { url: info.image } : undefined,
-              color: 0x00ff00,
-            }
-            await postWebhook(embed)
-            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
-            const telegramMessage = isFirstDetection
-              ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💸 <b>Current Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
-              : (() => {
-                  const discount = ((mainPrevPrice - mainNewPrice) / mainPrevPrice * 100).toFixed(1)
-                  return `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Old Price:</b> ${info.symbol}${mainPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
-                })()
-            await postTelegram(telegramMessage, info.image)
+              telegramText: isFirstDetection
+                ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💸 <b>Current Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
+                : `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b>\n\n💰 <b>Old Price:</b> ${info.symbol}${mainPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${mainNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`,
+              image: info.image,
+              color: 0x00ff00
+            }, webhookIds)
             sent++
             state[finalUrl].lastNotifiedMain = mainSig
           }
@@ -1075,20 +1080,18 @@ async function checkOnce() {
           if (!notifyOnce || whSig !== lastWhSig || (repeatAlerts && whNewAvail && whPassesThreshold)) {
             let desc = `Warehouse Price: ${info.symbol}${whNewPrice.toFixed(2)}`
             if (mainNewPrice > 0 && whNewPrice < mainNewPrice) {
-              const diff = (mainNewPrice - whNewPrice).toFixed(2)
-              desc = `Warehouse Price: ${info.symbol}${whNewPrice.toFixed(2)}\nMain Price: ${info.symbol}${mainNewPrice.toFixed(2)}\nSavings vs Main: ${info.symbol}${diff}`
+              const savingsDiff = (mainNewPrice - whNewPrice).toFixed(2)
+              desc = `Warehouse Price: ${info.symbol}${whNewPrice.toFixed(2)}\nMain Price: ${info.symbol}${mainNewPrice.toFixed(2)}\nSavings vs Main: ${info.symbol}${savingsDiff}`
             }
             const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
-            const embed = {
+            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
+            await sendNotification({
               title: `Back in stock for "${info.title || 'N/A'}" (Amazon Warehouse)`,
               description: `${desc}\n\n[View Product](${finalUrl})${offerLink}`,
-              thumbnail: info.image ? { url: info.image } : undefined,
-              color: 0x0099ff,
-            }
-            await postWebhook(embed)
-            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
-            const telegramMessage = `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>${offerLinkTg}`
-            await postTelegram(telegramMessage, info.image)
+              telegramText: `🛒 <b>Back in Stock!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">View Product</a>${offerLinkTg}`,
+              image: info.image,
+              color: 0x0099ff
+            }, webhookIds)
             sent++
             state[finalUrl].lastNotifiedWarehouse = whSig
           }
@@ -1098,24 +1101,20 @@ async function checkOnce() {
           if (!notifyOnce || whSig !== lastWhSig || (repeatAlerts && whNewAvail && whPassesThreshold)) {
             const isFirstDetection = !prev || whPrevPrice === 0
             const diff = isFirstDetection ? '0.00' : (whPrevPrice - whNewPrice).toFixed(2)
+            const discount = isFirstDetection ? '0' : ((whPrevPrice - whNewPrice) / whPrevPrice * 100).toFixed(1)
             const offerLink = offerListingUrl ? `\n\n[View All Offers](${offerListingUrl})` : ''
-            const embed = {
+            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
+            await sendNotification({
               title: `Price alert for "${info.title || 'N/A'}" (Amazon Warehouse)`,
               description: isFirstDetection
                 ? `Current Price: ${info.symbol}${whNewPrice.toFixed(2)}\n\n[View Product](${finalUrl})${offerLink}`
                 : `Old Price: ${info.symbol}${whPrevPrice.toFixed(2)}\nNew Price: ${info.symbol}${whNewPrice.toFixed(2)}\nDiff: ${info.symbol}${diff}\n\n[View Product](${finalUrl})${offerLink}`,
-              thumbnail: info.image ? { url: info.image } : undefined,
-              color: 0x00ff00,
-            }
-            await postWebhook(embed)
-            const offerLinkTg = offerListingUrl ? `\n🛍️ <a href="${offerListingUrl}">View All Offers</a>` : ''
-            const telegramMessage = isFirstDetection
-              ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💸 <b>Current Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
-              : (() => {
-                  const discount = ((whPrevPrice - whNewPrice) / whPrevPrice * 100).toFixed(1)
-                  return `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Old Price:</b> ${info.symbol}${whPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
-                })()
-            await postTelegram(telegramMessage, info.image)
+              telegramText: isFirstDetection
+                ? `💰 <b>Price Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💸 <b>Current Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`
+                : `📉 <b>Price Drop Alert!</b>\n\n<b>${info.title || 'N/A'}</b> (Amazon Warehouse)\n\n💰 <b>Old Price:</b> ${info.symbol}${whPrevPrice.toFixed(2)}\n💸 <b>New Price:</b> ${info.symbol}${whNewPrice.toFixed(2)}\n🔥 <b>Savings:</b> ${info.symbol}${diff} (${discount}% off)\n🔗 <a href="${finalUrl}">Buy Now</a>${offerLinkTg}`,
+              image: info.image,
+              color: 0x00ff00
+            }, webhookIds)
             sent++
             state[finalUrl].lastNotifiedWarehouse = whSig
           }
@@ -1222,20 +1221,42 @@ async function main() {
         req.on('data', c => { body += c })
         req.on('end', () => {
           try {
-            const { name, url: webhookUrl } = JSON.parse(body || '{}')
-            if (!name || !webhookUrl) {
+            const { name, type, url: webhookUrl, botToken, chatId } = JSON.parse(body || '{}')
+            if (!name) {
               res.statusCode = 400
-              return res.end(JSON.stringify({ error: 'name and url are required' }))
+              return res.end(JSON.stringify({ error: 'name is required' }))
+            }
+            const webhookType = type || 'discord'
+            if (webhookType === 'discord') {
+              if (!webhookUrl) {
+                res.statusCode = 400
+                return res.end(JSON.stringify({ error: 'url is required for Discord webhooks' }))
+              }
+            } else if (webhookType === 'telegram') {
+              if (!botToken || !chatId) {
+                res.statusCode = 400
+                return res.end(JSON.stringify({ error: 'botToken and chatId are required for Telegram' }))
+              }
+            } else {
+              res.statusCode = 400
+              return res.end(JSON.stringify({ error: 'Invalid webhook type. Use "discord" or "telegram"' }))
             }
             const data = loadWebhooks()
             const newId = String(data.nextId || 1)
             const isFirstWebhook = data.webhooks.length === 0
-            data.webhooks.push({
+            const webhook = {
               id: newId,
               name: String(name),
-              url: String(webhookUrl),
+              type: webhookType,
               isDefault: isFirstWebhook
-            })
+            }
+            if (webhookType === 'discord') {
+              webhook.url = String(webhookUrl)
+            } else if (webhookType === 'telegram') {
+              webhook.botToken = String(botToken)
+              webhook.chatId = String(chatId)
+            }
+            data.webhooks.push(webhook)
             data.nextId = (data.nextId || 1) + 1
             saveWebhooks(data)
             res.end(JSON.stringify({ ok: true, id: newId }))
@@ -1295,8 +1316,6 @@ async function main() {
             minutes_per_check: minutesPerCheck,
             seconds_between_check: secondsBetweenCheck,
             tld: config.tld || 'com',
-            telegram_bot_token: config.telegram_bot_token || '',
-            telegram_chat_id: config.telegram_chat_id || '',
             history_enabled: HISTORY_ENABLED,
             history_days: historyCfg.keep_full_days,
             history_limit: historyCfg.max_points,
@@ -1329,12 +1348,6 @@ async function main() {
             if (typeof updates.tld === 'string' && updates.tld.length > 0) {
               currentConfig.tld = updates.tld
             }
-            if (updates.telegram_bot_token !== undefined) {
-              currentConfig.telegram_bot_token = updates.telegram_bot_token || ''
-            }
-            if (updates.telegram_chat_id !== undefined) {
-              currentConfig.telegram_chat_id = updates.telegram_chat_id || ''
-            }
             if (typeof updates.history_days === 'number' && updates.history_days >= 0) {
               currentConfig.history_days = updates.history_days
             }
@@ -1365,56 +1378,22 @@ async function main() {
         })
         return
       }
-      if (url.pathname === '/api/test' && req.method === 'POST') {
-        // send a simple global test message
-        postWebhook({ title: 'AmazonMonitor Test', description: 'This is a test alert from the server UI.' }).then(()=>{
-          res.end(JSON.stringify({ ok: true }))
-        }).catch(()=>{
-          res.end(JSON.stringify({ ok: false }))
-        })
-        return
-      }
-      if (url.pathname === '/api/test' && req.method === 'POST' && url.searchParams.get('asin')) {
-        // fallback; handled by query in next handler
-      }
-      if (url.pathname === '/api/test' && req.method === 'POST') {
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
       if (url.pathname === '/api/test' && req.method === 'GET') {
         res.end(JSON.stringify({ ok: true }))
         return
       }
       if (url.pathname === '/api/test' && req.method === 'POST') {
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
-      if (url.pathname === '/api/test' && req.method === 'POST') {
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
-      if (url.pathname === '/api/test' && req.method === 'POST') {
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
-      if (url.pathname === '/api/test' && req.method === 'POST') {
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
-      if (url.pathname === '/api/test' && req.method === 'POST') {
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
-      if (url.pathname === '/api/test' && req.method === 'POST') {
-        res.end(JSON.stringify({ ok: true }))
-        return
-      }
-      if (url.pathname.startsWith('/api/test') && req.method === 'POST') {
         const asin = url.searchParams.get('asin')
-        const msg = asin ? `Test alert for ASIN ${asin}` : 'Test alert'
-        postWebhook({ title: 'AmazonMonitor Test', description: msg }).then(()=>{
+        const webhookId = url.searchParams.get('webhook')
+        const msg = asin ? `Test alert for ASIN ${asin}` : 'This is a test alert from the server UI.'
+        sendNotification({
+          title: 'AmazonMonitor Test',
+          description: msg,
+          telegramText: `🔔 <b>Test Alert</b>\n\n${msg}`,
+          color: 0x5865F2
+        }, webhookId ? [webhookId] : null).then(() => {
           res.end(JSON.stringify({ ok: true }))
-        }).catch(()=>{
+        }).catch(() => {
           res.end(JSON.stringify({ ok: false }))
         })
         return
@@ -1498,7 +1477,7 @@ async function main() {
               lowestSeen: st.lowestSeen || null,
               history: st.history || [],
               repeatAlerts: e.repeatAlerts || false,
-              webhookId: e.webhookId || null,
+              webhookIds: e.webhookIds || null,
               paused: st.paused || false
             }
           })
@@ -1633,7 +1612,9 @@ async function main() {
               if (data.baseline && ['last','lowest','start'].includes(String(data.baseline))) tokens.push(`baseline=${data.baseline}`)
               if (data.repeatAlerts === 'on' || data.repeatAlerts === true) tokens.push(`repeat_alerts=on`)
               if (data.notifyOnce === 'once' || data.notifyOnce === true) tokens.push(`notify=once`)
-              if (data.webhookId && String(data.webhookId).trim()) tokens.push(`webhook=${String(data.webhookId).trim()}`)
+              // Support both webhookId (single) and webhookIds (array) from API
+              const whIds = data.webhookIds || (data.webhookId ? [data.webhookId] : null)
+              if (whIds && whIds.length > 0) tokens.push(`webhook=${whIds.join(',')}`)
               updated = true
               return head + (tokens.length ? '|' + tokens.join('|') : '')
             })
@@ -1644,8 +1625,13 @@ async function main() {
               const state = loadWatch()
               const urlKey = Object.keys(state).find(k => (k || '').includes(asin))
               if (urlKey && state[urlKey]) {
+                const wasPaused = state[urlKey].paused || false
                 state[urlKey].paused = data.paused
                 saveWatch(state)
+                // Trigger immediate scan when resuming an item
+                if (wasPaused && !data.paused) {
+                  setTimeout(() => { checkOnce().catch(()=>{}) }, 0)
+                }
               }
             }
             res.end(JSON.stringify({ ok: true }))
